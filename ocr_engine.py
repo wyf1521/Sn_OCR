@@ -2,16 +2,11 @@
 
 当前支持：
   - siliconflow : 大模型 OCR API（DeepSeek-OCR 等），通过 OpenAI 兼容接口
-  - paddle      : 本地 PaddleOCR（离线，无需 API key）
-
-切换方式：修改 ocr_config.json 中的 "provider" 字段即可。
 """
 import re
 import os
-import io
 import json
 import base64
-import sys
 import urllib.request
 import urllib.error
 from PIL import Image
@@ -436,55 +431,6 @@ def _normalize_fields(raw: dict) -> dict:
     return norm
 
 
-# ---------------- 本地 PaddleOCR 供应商 ----------------
-
-_paddle_instance = None
-
-
-def _get_paddle():
-    global _paddle_instance
-    if _paddle_instance is None:
-        try:
-            from paddleocr import PaddleOCR
-        except ImportError:
-            raise RuntimeError('未安装 paddleocr，请 pip install paddleocr')
-        lang = load_config().get('paddle', {}).get('lang', 'ch')
-        _paddle_instance = PaddleOCR(lang=lang)
-    return _paddle_instance
-
-
-def _run_paddle(image_path: str) -> str:
-    """本地 PaddleOCR 识别（离线兜底）"""
-    ocr = _get_paddle()
-    old_stdout, old_stderr = sys.stdout, sys.stderr
-    try:
-        sys.stdout = open('NUL', 'w') if sys.platform == 'win32' else open('/dev/null', 'w')
-        sys.stderr = sys.stdout
-        result = ocr.predict(image_path)
-    finally:
-        sys.stdout.close()
-        sys.stdout, sys.stderr = old_stdout, old_stderr
-
-    lines = []
-    if not result:
-        return ''
-    for item in result:
-        texts = None
-        if hasattr(item, 'rec_texts'):
-            texts = item.rec_texts
-        elif isinstance(item, dict):
-            texts = item.get('rec_texts') or item.get('texts')
-        if texts is None:
-            try:
-                texts = [t for t in item if isinstance(t, str)]
-            except Exception:
-                texts = []
-        for t in texts:
-            if t and str(t).strip():
-                lines.append(str(t).strip())
-    return '\n'.join(lines)
-
-
 # ---------------- 统一入口 ----------------
 
 def run_ocr(image_path: str) -> dict:
@@ -508,12 +454,9 @@ def run_ocr(image_path: str) -> dict:
     cfg = load_config()
 
     # 1. 拿到原始识别文本
-    if provider == 'siliconflow':
-        raw_text = _call_openai_vision(cfg.get('siliconflow', {}), processed)
-    elif provider == 'paddle':
-        raw_text = _run_paddle(processed)
-    else:
+    if provider != 'siliconflow':
         raise RuntimeError(f'未知的 OCR 供应商: {provider}')
+    raw_text = _call_openai_vision(cfg.get('siliconflow', {}), processed)
 
     # 2. 结构化字段提取（兼容多种格式）
     #    a) 先尝试当 JSON/表格 解析（兼容之前那种 prompt 输出）
@@ -542,7 +485,7 @@ def run_ocr(image_path: str) -> dict:
 def parse_fields(full_text) -> dict:
     """兼容层：run_ocr 现在直接返回结构化字段，这里仅做兜底解析
 
-    如果上游调用的是 PaddleOCR 返回的全文，会走正则兜底。
+    如果上游只返回纯文本，会走正则兜底。
     """
     # 如果已经是结构化字段（dict），直接返回
     if isinstance(full_text, dict):

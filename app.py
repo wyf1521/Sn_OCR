@@ -42,11 +42,10 @@ def login_required(f):
 def index():
     if 'user' not in session:
         return redirect(url_for('login'))
-    # 展示当前用户的记录
-    records = database.list_records(username=session['user'], limit=200)
-    is_admin = session['user'] in Config.ADMIN_USERS
+    # 所有登录用户共享记录和操作权限
+    records = database.list_records(limit=200)
     return render_template('index.html', user=session['user'],
-                           records=records, is_admin=is_admin)
+                           records=records)
 
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -99,7 +98,7 @@ def upload():
     # 记录 OCR 调用信息
     provider = ocr_engine.get_provider()
     cfg = ocr_engine.load_config()
-    ocr_model = cfg.get(provider, {}).get('model', '') if provider != 'paddle' else 'PaddleOCR(本地)'
+    ocr_model = cfg.get(provider, {}).get('model', '')
     start = time.time()
 
     try:
@@ -177,42 +176,32 @@ def uploaded_file(filename):
 @app.route('/export')
 @login_required
 def export():
-    """导出当前用户的全部记录为 Excel"""
-    records = database.list_records(username=session['user'], limit=100000)
+    """导出全部记录为 Excel"""
+    # 导出与首页展示完全相同的记录范围和顺序。
+    records = database.list_records(limit=200)
     if not records:
         flash('暂无数据可导出', 'warning')
         return redirect(url_for('index'))
 
-    out_dir = os.path.join(Config.DATA_FOLDER, 'exports', session['user'])
+    out_dir = os.path.join(Config.DATA_FOLDER, 'exports')
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, 'ocr_records.xlsx')
     excel_export.export_to_excel(records, out_path)
     return send_file(out_path, as_attachment=True,
-                     download_name=f'ocr_records_{session["user"]}.xlsx')
+                     download_name='ocr_records.xlsx')
 
 
 @app.route('/api/records')
 @login_required
 def api_records():
-    """JSON API：返回当前用户的所有记录（便于其他系统对接）"""
-    return jsonify(database.list_records(username=session['user'], limit=1000))
-
-
-def admin_required(f):
-    """仅管理员可用的接口"""
-    @wraps(f)
-    def wrapper(*args, **kwargs):
-        if session.get('user') not in Config.ADMIN_USERS:
-            return jsonify({'success': False, 'error': '无权限，仅管理员可操作'}), 403
-        return f(*args, **kwargs)
-    return wrapper
+    """JSON API：返回全部记录（便于其他系统对接）"""
+    return jsonify(database.list_records(limit=1000))
 
 
 @app.route('/api/record/<int:record_id>', methods=['PUT'])
 @login_required
-@admin_required
 def update_record(record_id):
-    """管理员手动修改某条记录的可编辑字段"""
+    """登录用户手动修改某条记录的可编辑字段"""
     data = request.get_json(silent=True)
     if not data:
         return jsonify({'success': False, 'error': '请求体为空'}), 400
@@ -225,6 +214,38 @@ def update_record(record_id):
         return jsonify({'success': False, 'error': '没有可更新的字段或记录不存在'}), 400
 
     return jsonify({'success': True, 'message': '更新成功', 'record': database.get_record(record_id)})
+
+
+@app.route('/api/record/<int:record_id>', methods=['DELETE'])
+@login_required
+def delete_record(record_id):
+    """删除记录及其关联的原图、预处理图和导出缩略图。"""
+    record = database.get_record(record_id)
+    if not record:
+        return jsonify({'success': False, 'error': '记录不存在'}), 404
+
+    if not database.delete_record(record_id):
+        return jsonify({'success': False, 'error': '删除失败'}), 500
+
+    paths = {
+        record.get('image_path'),
+        os.path.join(Config.DATA_FOLDER, 'image_cache', os.path.basename(record.get('image_path', ''))),
+        os.path.join(Config.DATA_FOLDER, 'image_cache', 'thumbs', os.path.basename(record.get('image_path', ''))),
+    }
+    cleanup_errors = []
+    for path in paths:
+        if not path:
+            continue
+        try:
+            if os.path.isfile(path):
+                os.remove(path)
+        except OSError as exc:
+            cleanup_errors.append(str(exc))
+
+    response = {'success': True, 'record_id': record_id}
+    if cleanup_errors:
+        response['cleanup_warning'] = '数据库记录已删除，但部分文件清理失败'
+    return jsonify(response)
 
 
 # ---------- 入口 ----------

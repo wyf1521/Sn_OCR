@@ -1,12 +1,11 @@
 import os
-import json
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 
 class Config:
-    # 密钥（生产环境请使用环境变量）
-    SECRET_KEY = os.environ.get('SECRET_KEY', 'sn-ocr-internal-secret-key-change-me')
+    # 密钥和账号密码只从服务器环境变量读取，不写入仓库。
+    SECRET_KEY = os.environ.get('SECRET_KEY') or os.urandom(32)
 
     # 上传配置
     UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
@@ -21,11 +20,7 @@ class Config:
     # OCR 供应商配置文件（可随时修改，切换供应商或改 key）
     OCR_CONFIG_PATH = os.path.join(BASE_DIR, 'ocr_config.json')
 
-    # 内部用户账号（实际部署请改为强密码或接入 LDAP/AD）
+    # 内部用户账号；部署时设置 SN_OCR_ADMIN_PASSWORD。
     USERS = {
-        'admin': 'admin@2026',       # 管理员
-        'staff': 'staff@2026',       # 普通员工
+        'admin': os.environ.get('SN_OCR_ADMIN_PASSWORD', ''),
     }
-
-    # 拥有"编辑/修改数据"权限的管理员名单
-    ADMIN_USERS = ['admin']

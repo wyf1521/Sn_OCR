@@ -1,19 +1,19 @@
 # Sn_OCR — 计算机信息 OCR 提取系统
 
-> 挂在 Ubuntu 服务器上的内部网页工具。上传类似 `Windows Script Host 计算机信息` 的图片，自动 OCR 识别其中的 **机器名、网卡、MAC、硬盘、内存、SN号** 等信息，结果按用户永久保存到 SQLite，并可一键导出为 Excel。
+> 挂在 Ubuntu 服务器上的内部网页工具。上传类似 `Windows Script Host 计算机信息` 的图片，自动 OCR 识别其中的 **机器名、网卡、MAC、硬盘、内存、SN号** 等信息，结果永久保存到 SQLite，并可一键导出为 Excel。
 
 ## 功能
 
 - 🔐 内部账号登录（账号密码，硬编码在 `config.py`）
-- 📷 图片上传 → 自动 OCR（默认走大模型 API，可切换本地 PaddleOCR）
+- 📷 图片上传 → 自动 OCR（调用 OpenAI 兼容的大模型 API）
 - 🧾 结构化字段提取（机器名 / 网卡1 / 网卡2 / MAC / 硬盘 / 内存 / SN）
-- 💾 数据按 **用户** 永久保存到 SQLite
-- 📊 一键导出当前用户全部记录为 `.xlsx`
+- 💾 数据永久保存到 SQLite，所有登录用户共享记录
+- 📊 一键导出全部记录为 `.xlsx`
 - 🌐 简单的 `/api/records` JSON API 便于对接其他系统
 
-## OCR 供应商配置（重点）
+## OCR 配置（重点）
 
-OCR 供应商信息全部集中在 **`ocr_config.json`**，随时修改、随时切换：
+OCR 供应商信息全部集中在本地配置文件 **`ocr_config.json`**。该文件包含 API Key，不上传到 Git；仓库提供不含密钥的 **`ocr_config.example.json`**：
 
 ```json
 {
@@ -24,15 +24,13 @@ OCR 供应商信息全部集中在 **`ocr_config.json`**，随时修改、随时
     "model": "deepseek-ai/DeepSeek-OCR",
     "timeout": 120,
     "max_tokens": 4096
-  },
-  "paddle": { "lang": "ch" }
+  }
 }
 ```
 
-- **换供应商**：改 `"provider"` 字段（当前支持 `siliconflow` / `paddle`）。
+- **当前供应商**：`siliconflow`，通过 OpenAI 兼容接口调用视觉 OCR 模型。
 - **换 API 地址 / 模型 / key**：直接改对应字段即可，无需改代码。
 - 大模型 OCR 走 OpenAI 兼容的 `/chat/completions` 接口，因此 SiliconFlow、DeepSeek、通义、智谱、Moonshot 等几乎所有厂商都能用——只需改 `api_base` + `api_key` + `model` 三个值。
-- 若切换到 `paddle`（本地离线 OCR），需要 `pip install paddleocr`（见 `requirements.txt` 注释）。
 
 ## 目录结构
 
@@ -40,17 +38,17 @@ OCR 供应商信息全部集中在 **`ocr_config.json`**，随时修改、随时
 Sn_OCR/
 ├── app.py              # Flask 主入口
 ├── config.py           # 配置（用户、路径）
-├── ocr_config.json     # OCR 供应商配置（key/模型/切换）
+├── ocr_config.example.json # OCR 配置模板（不含 key）
 ├── database.py         # SQLite 数据访问层
 ├── ocr_engine.py       # OCR 引擎（多供应商）+ 字段解析
 ├── excel_export.py     # openpyxl 导出
 ├── templates/          # Jinja2 模板
 │   ├── login.html
 │   └── index.html
-├── uploads/            # 上传的原始图片
+├── uploads/            # 上传的原始图片（运行时生成）
 ├── data/
 │   ├── ocr_data.db     # SQLite 数据库
-│   └── exports/<user>/ocr_records.xlsx
+│   └── exports/ocr_records.xlsx
 ├── requirements.txt
 └── README.md
 ```
@@ -74,24 +72,26 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-> **使用第三方大模型 OCR（默认）** 无需安装任何模型，直接填 `ocr_config.json` 的 key 即可。  
-> **若要用本地 PaddleOCR 兜底**，再执行：`pip install paddleocr`（3.x 自带 paddlex，无需单独装 paddlepaddle）。
+> 使用第三方大模型 OCR 无需安装本地模型。部署时先执行 `cp ocr_config.example.json ocr_config.json`，再填写 `ocr_config.json` 的 API key；`ocr_config.json` 只保存在服务器本地。
 
-### 3. 配置 OCR 供应商
+### 3. 配置 OCR
 
-编辑 `ocr_config.json`，填写你的 API key：
+复制配置模板并填写 API key：
+```bash
+cp ocr_config.example.json ocr_config.json
+```
+
+编辑本地的 `ocr_config.json`：
 ```json
 "api_key": "sk-xxxxxxxxxxxxxxxx"
 ```
 
 ### 4. 修改账号
 
-编辑 `config.py` 里的 `USERS` 字典，把 `admin` / `staff` 的密码改成强密码：
-```python
-USERS = {
-    'zhangsan': 'YourStrongPwd!',
-    'lisi':     'AnotherPwd!',
-}
+账号密码不写入代码，部署前设置环境变量：
+```bash
+export SECRET_KEY="$(openssl rand -hex 32)"
+export SN_OCR_ADMIN_PASSWORD='YourStrongPwd!'
 ```
 
 ### 5. 启动
@@ -173,20 +173,15 @@ sudo systemctl enable --now sn_ocr
 
 > 如果图片中增加了新的字段或格式变动，编辑 `ocr_engine.py` 里的 `parse_fields()` 即可，对应数据库会自动适应。
 
-## 内置默认账号
+## 账号
 
-| 账号 | 密码 |
-|------|------|
-| admin | admin@2026 |
-| staff | staff@2026 |
-
-> ⚠️ 部署后务必修改 `config.py` 中的密码！
+账号固定为 `admin`，密码由 `SN_OCR_ADMIN_PASSWORD` 环境变量提供，不再写入仓库。
 
 ## API
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| GET | `/api/records` | 当前用户全部记录 JSON |
+| GET | `/api/records` | 全部记录 JSON |
 
 ## 许可
 

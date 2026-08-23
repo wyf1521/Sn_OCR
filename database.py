@@ -7,8 +7,9 @@ from config import Config
 
 def get_conn():
     os.makedirs(Config.DATA_FOLDER, exist_ok=True)
-    conn = sqlite3.connect(Config.DB_PATH)
+    conn = sqlite3.connect(Config.DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
+    conn.execute('PRAGMA foreign_keys = ON')
     return conn
 
 
@@ -137,6 +138,30 @@ def update_record(record_id: int, updates: dict) -> bool:
     values = list(allowed.values()) + [record_id]
     cur.execute(f'UPDATE ocr_records SET {set_clause} WHERE id=?', values)
     changed = cur.rowcount > 0
+    if changed:
+        for field_name, field_value in allowed.items():
+            cur.execute('''
+                UPDATE ocr_fields SET field_value=?
+                WHERE record_id=? AND field_name=?
+            ''', (field_value, record_id, field_name))
+            if cur.rowcount == 0:
+                cur.execute(
+                    'INSERT INTO ocr_fields (record_id, field_name, field_value) VALUES (?,?,?)',
+                    (record_id, field_name, field_value)
+                )
     conn.commit()
     conn.close()
     return changed
+
+
+def delete_record(record_id: int) -> bool:
+    """删除一条 OCR 记录；关联字段由外键级联删除。"""
+    conn = get_conn()
+    try:
+        cur = conn.cursor()
+        cur.execute('DELETE FROM ocr_records WHERE id=?', (record_id,))
+        deleted = cur.rowcount > 0
+        conn.commit()
+        return deleted
+    finally:
+        conn.close()

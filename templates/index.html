@@ -108,16 +108,34 @@ tr:hover { background: #f9f9ff; }
 td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointer; border: 1px solid #ddd; }
 .empty { padding: 40px; text-align: center; color: #999; }
 
-.edit-btn {
-    padding: 4px 10px;
-    background: #ff9800;
+.edit-btn,
+.delete-btn {
+    display: block;
+    width: 64px;
+    min-width: 64px;
+    box-sizing: border-box;
+    height: 32px;
+    padding: 4px 2px;
+    margin: 0 0 4px;
+    text-align: center;
+    white-space: nowrap;
+    line-height: 1.2;
     color: #fff;
     border: none;
     border-radius: 4px;
     cursor: pointer;
     font-size: 12px;
 }
+
+.edit-btn {
+    background: #ff9800;
+}
 .edit-btn:hover { background: #e68900; }
+
+.delete-btn {
+    background: #dc3545;
+}
+.delete-btn:hover { background: #bd2130; }
 
 /* 编辑弹窗 */
 .modal-mask {
@@ -234,7 +252,7 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
                 <th>内存(GB)</th>
                 <th>上传时间</th>
                 <th>原图</th>
-                {% if is_admin %}<th>操作</th>{% endif %}
+                <th>操作</th>
             </tr>
         </thead>
         <tbody>
@@ -254,9 +272,10 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
                         <img src="{{ url_for('uploaded_file', filename=r.image_path.split('/')[-1].split('\\')[-1]) }}">
                     </a>
                 </td>
-                {% if is_admin %}
-                <td><button class="edit-btn" data-id="{{ r.id }}">✏️ 编辑</button></td>
-                {% endif %}
+                <td>
+                    <button class="edit-btn" data-id="{{ r.id }}">✏️ 编辑</button>
+                    <button class="delete-btn" data-id="{{ r.id }}">🗑️ 删除</button>
+                </td>
             </tr>
         {% endfor %}
         </tbody>
@@ -268,7 +287,6 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
 </div>
 
 <script>
-var IS_ADMIN = {{ 'true' if is_admin else 'false' }};
 (function () {
     var form = document.getElementById('upload-form');
     var btn = document.getElementById('upload-btn');
@@ -378,7 +396,8 @@ var IS_ADMIN = {{ 'true' if is_admin else 'false' }};
             '<td class="editable" data-field="memory_gb">' + val('memory_gb') + '</td>' +
             '<td>' + escapeHtml(d.upload_time || '') + '</td>' +
             '<td><a href="' + imgUrl + '" target="_blank"><img src="' + imgUrl + '"></a></td>' +
-            (IS_ADMIN ? '<td><button class="edit-btn" data-id="' + d.record_id + '">✏️ 编辑</button></td>' : '') +
+            '<td><button class="edit-btn" data-id="' + d.record_id + '">✏️ 编辑</button>' +
+            '<button class="delete-btn" data-id="' + d.record_id + '">🗑️ 删除</button></td>' +
             '</tr>';
 
         var table = document.getElementById('records-table');
@@ -392,7 +411,7 @@ var IS_ADMIN = {{ 'true' if is_admin else 'false' }};
                 '<th>机器名</th><th>SN号</th><th>网卡1</th><th>网卡1 MAC</th>' +
                 '<th>网卡2</th><th>网卡2 MAC</th><th>硬盘(GB)</th><th>内存(GB)</th>' +
                 '<th>上传时间</th><th>原图</th>' +
-                (IS_ADMIN ? '<th>操作</th>' : '') +
+                '<th>操作</th>' +
                 '</tr></thead><tbody>' + rowHtml + '</tbody>';
             if (emptyDiv) {
                 emptyDiv.parentNode.replaceChild(table, emptyDiv);
@@ -401,6 +420,10 @@ var IS_ADMIN = {{ 'true' if is_admin else 'false' }};
             // 已有表格：新记录插入到最顶部（列表按时间倒序）
             var tbody = table.querySelector('tbody');
             tbody.insertAdjacentHTML('afterbegin', rowHtml);
+            // 与后端导出保持一致：首页最多展示最新 200 条。
+            while (tbody.children.length > 200) {
+                tbody.removeChild(tbody.lastElementChild);
+            }
             // 闪一下高亮，提示新行
             var newRow = tbody.querySelector('tr');
             newRow.style.background = '#e8f4ff';
@@ -411,14 +434,13 @@ var IS_ADMIN = {{ 'true' if is_admin else 'false' }};
         var h3 = document.querySelector('.toolbar h3');
         if (h3) {
             var m = h3.textContent.match(/(\d+)/);
-            var count = m ? parseInt(m[1], 10) + 1 : 1;
+            var count = m ? Math.min(200, parseInt(m[1], 10) + 1) : 1;
             h3.textContent = '📊 历史记录（' + count + ' 条）';
         }
     }
 })();
 </script>
 
-{% if is_admin %}
 <!-- 编辑弹窗 -->
 <div class="modal-mask" id="edit-mask">
     <div class="modal">
@@ -480,6 +502,11 @@ var IS_ADMIN = {{ 'true' if is_admin else 'false' }};
 
     // 打开编辑弹窗（事件委托：动态插入的新行也能响应）
     document.addEventListener('click', function (e) {
+        var deleteBtn = e.target.closest ? e.target.closest('.delete-btn') : null;
+        if (deleteBtn) {
+            deleteRecord(deleteBtn.getAttribute('data-id'));
+            return;
+        }
         var btn = e.target.closest ? e.target.closest('.edit-btn') : null;
         if (!btn) return;
         var id = btn.getAttribute('data-id');
@@ -496,6 +523,38 @@ var IS_ADMIN = {{ 'true' if is_admin else 'false' }};
         });
         mask.classList.add('show');
     });
+
+    function deleteRecord(id) {
+        if (!window.confirm('确定删除这条记录及对应图片吗？')) return;
+
+        fetch('/api/record/' + encodeURIComponent(id), { method: 'DELETE' })
+            .then(function (resp) {
+                return resp.json().then(function (data) {
+                    return { ok: resp.ok, data: data };
+                });
+            })
+            .then(function (result) {
+                if (!result.ok || !result.data.success) {
+                    throw new Error(result.data.error || '删除失败');
+                }
+                var row = document.querySelector('tr[data-id="' + id + '"]');
+                if (row) row.remove();
+
+                var h3 = document.querySelector('.toolbar h3');
+                if (h3) {
+                    var match = h3.textContent.match(/(\d+)/);
+                    var count = match ? Math.max(0, parseInt(match[1], 10) - 1) : 0;
+                    h3.textContent = '📊 历史记录（' + count + ' 条）';
+                }
+                var tbody = document.querySelector('#records-table tbody');
+                if (tbody && !tbody.children.length) {
+                    document.getElementById('records-table').outerHTML = '<div class="empty">还没有记录，赶快上传第一张图片吧 🚀</div>';
+                }
+            })
+            .catch(function (err) {
+                window.alert(err.message || String(err));
+            });
+    }
 
     function closeModal() {
         mask.classList.remove('show');
@@ -546,7 +605,6 @@ var IS_ADMIN = {{ 'true' if is_admin else 'false' }};
     }
 })();
 </script>
-{% endif %}
 
 </body>
 </html>

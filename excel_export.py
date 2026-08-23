@@ -9,18 +9,15 @@ from config import Config
 
 
 COLUMNS = [
-    ('ID', 'id', 8),
-    ('上传用户', 'username', 14),
     ('机器名', 'machine_name', 18),
-    ('网卡1名称', 'nic1_name', 40),
+    ('SN号', 'sn_number', 18),
+    ('网卡1', 'nic1_name', 40),
     ('网卡1 MAC', 'nic1_mac', 22),
-    ('网卡2名称', 'nic2_name', 40),
+    ('网卡2', 'nic2_name', 40),
     ('网卡2 MAC', 'nic2_mac', 22),
     ('硬盘(GB)', 'disk_gb', 12),
     ('内存(GB)', 'memory_gb', 12),
-    ('SN号', 'sn_number', 18),
     ('上传时间', 'upload_time', 22),
-    ('图片名', 'image_name', 30),
     ('原图', '_image', 34),   # 特殊列：嵌入图片缩略图
 ]
 
@@ -101,7 +98,8 @@ def export_to_excel(records: list, output_path: str = None,
                             pass  # 单张图片失败不影响整体导出
                 continue
 
-            value = rec.get(key, '')
+            # 与前端表格保持一致：空字段显示为短横线。
+            value = rec.get(key) or '-'
             cell = ws.cell(row=row_idx, column=col_idx, value=value)
             cell.alignment = Alignment(vertical="center", wrap_text=True)
             cell.border = border

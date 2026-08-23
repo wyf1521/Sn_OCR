@@ -1,0 +1,23 @@
+# Local secrets and runtime configuration
+ocr_config.json
+.env
+
+# Runtime data
+uploads/*
+data/*
+!data/.gitkeep
+*.db
+*.xlsx
+*_test_result.txt
+img.jpg
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+Thumbs.db
