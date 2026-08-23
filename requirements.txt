@@ -1,0 +1,10 @@
+Flask>=3.0.0
+Flask-Login>=0.6.3
+Werkzeug>=3.0.1
+openpyxl>=3.1.2
+Pillow>=10.2.0
+numpy>=1.26.0
+
+# 可选：本地 OCR 兜底（若只用第三方 API 则无需安装）
+# paddleocr>=3.0.0
+# paddlex>=3.0.0

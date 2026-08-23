@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>计算机信息 OCR 提取系统</title>
+<style>
+* { box-sizing: border-box; }
+body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: #f4f6fa;
+    color: #333;
+}
+header {
+    background: linear-gradient(90deg, #667eea, #764ba2);
+    color: #fff;
+    padding: 16px 32px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+}
+header h1 { margin: 0; font-size: 20px; }
+header .user { font-size: 14px; }
+header a { color: #fff; text-decoration: none; margin-left: 16px; }
+header a:hover { text-decoration: underline; }
+
+.container { max-width: 1200px; margin: 24px auto; padding: 0 16px; }
+
+.upload-card {
+    background: #fff;
+    border-radius: 10px;
+    padding: 24px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+    margin-bottom: 24px;
+}
+.upload-card h3 { margin: 0 0 16px 0; }
+.upload-card form { display: flex; gap: 12px; align-items: center; }
+.upload-card input[type=file] {
+    flex: 1;
+    border: 1px dashed #ccc;
+    padding: 10px;
+    border-radius: 6px;
+}
+.upload-card button {
+    padding: 10px 24px;
+    background: #667eea;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+}
+.upload-card button:hover { background: #5568d3; }
+.upload-card button:disabled { background: #aaa; cursor: not-allowed; }
+
+.ocr-status { margin-top: 14px; font-size: 13px; display: none; }
+.ocr-status.show { display: block; }
+.ocr-status .loading { color: #667eea; }
+.ocr-status .ok { color: #155724; }
+.ocr-status .err { color: #c0392b; }
+.ocr-status pre {
+    background: #f5f5f5;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    padding: 12px;
+    max-height: 240px;
+    overflow: auto;
+    white-space: pre-wrap;
+    word-break: break-all;
+    font-size: 12px;
+    margin: 8px 0 0 0;
+}
+
+.toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.toolbar a.btn {
+    background: #28a745;
+    color: #fff;
+    padding: 8px 16px;
+    border-radius: 6px;
+    text-decoration: none;
+    font-size: 14px;
+}
+.toolbar a.btn:hover { background: #218838; }
+
+.flash-bar { padding: 12px; border-radius: 6px; margin-bottom: 16px; }
+.flash-bar.success { background: #d4edda; color: #155724; }
+.flash-bar.danger  { background: #f8d7da; color: #721c24; }
+.flash-bar.warning { background: #fff3cd; color: #856404; }
+
+table {
+    width: 100%;
+    background: #fff;
+    border-radius: 10px;
+    overflow: hidden;
+    border-collapse: collapse;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.06);
+}
+th {
+    background: #667eea;
+    color: #fff;
+    padding: 12px 8px;
+    text-align: left;
+    font-size: 13px;
+}
+td { padding: 10px 8px; border-bottom: 1px solid #eee; font-size: 13px; vertical-align: top; }
+tr:hover { background: #f9f9ff; }
+td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointer; border: 1px solid #ddd; }
+.empty { padding: 40px; text-align: center; color: #999; }
+
+.edit-btn {
+    padding: 4px 10px;
+    background: #ff9800;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+}
+.edit-btn:hover { background: #e68900; }
+
+/* 编辑弹窗 */
+.modal-mask {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.45);
+    z-index: 999;
+    align-items: center;
+    justify-content: center;
+}
+.modal-mask.show { display: flex; }
+.modal {
+    background: #fff;
+    border-radius: 10px;
+    width: 560px;
+    max-width: 92vw;
+    max-height: 86vh;
+    overflow: auto;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+}
+.modal-head {
+    padding: 16px 20px;
+    border-bottom: 1px solid #eee;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 16px;
+    font-weight: bold;
+}
+.modal-head .close { cursor: pointer; color: #999; font-size: 22px; line-height: 1; }
+.modal-head .close:hover { color: #333; }
+.modal-body { padding: 20px; }
+.modal-body label {
+    display: block;
+    font-size: 13px;
+    color: #555;
+    margin: 12px 0 4px;
+}
+.modal-body input {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid #ddd;
+    border-radius: 6px;
+    font-size: 14px;
+}
+.modal-body input:focus { outline: none; border-color: #667eea; }
+.modal-body .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; }
+.modal-foot {
+    padding: 16px 20px;
+    border-top: 1px solid #eee;
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+.modal-foot button {
+    padding: 8px 20px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+}
+.modal-foot .save { background: #667eea; color: #fff; }
+.modal-foot .save:hover { background: #5568d3; }
+.modal-foot .cancel { background: #eee; color: #333; }
+.modal-foot .cancel:hover { background: #ddd; }
+.modal-body .save-msg { font-size: 13px; margin-top: 10px; }
+</style>
+</head>
+<body>
+
+<header>
+    <h1>📷 计算机信息 OCR 提取系统</h1>
+    <div class="user">
+        👤 {{ user }}
+        <a href="{{ url_for('logout') }}">退出</a>
+    </div>
+</header>
+
+<div class="container">
+
+    <div class="upload-card">
+        <h3>上传图片识别</h3>
+        <form id="upload-form" action="{{ url_for('upload') }}" method="POST" enctype="multipart/form-data">
+            <input type="file" name="file" accept="image/*" required>
+            <button type="submit" id="upload-btn">🚀 开始识别</button>
+        </form>
+        <p style="color:#888; font-size:12px; margin: 12px 0 0 0;">支持 png / jpg / jpeg / bmp / webp 格式，单文件最大 16 MB</p>
+        <div id="ocr-status" class="ocr-status"></div>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+            <div class="flash-bar {{ category }}">{{ message }}</div>
+        {% endfor %}
+    {% endwith %}
+
+    <div class="toolbar">
+        <h3 style="margin:0;">📊 历史记录（{{ records|length }} 条）</h3>
+        <a class="btn" href="{{ url_for('export') }}">📥 导出 Excel</a>
+    </div>
+
+    {% if records %}
+    <table id="records-table">
+        <thead>
+            <tr>
+                <th>机器名</th>
+                <th>SN号</th>
+                <th>网卡1</th>
+                <th>网卡1 MAC</th>
+                <th>网卡2</th>
+                <th>网卡2 MAC</th>
+                <th>硬盘(GB)</th>
+                <th>内存(GB)</th>
+                <th>上传时间</th>
+                <th>原图</th>
+                {% if is_admin %}<th>操作</th>{% endif %}
+            </tr>
+        </thead>
+        <tbody>
+        {% for r in records %}
+            <tr data-id="{{ r.id }}">
+                <td class="editable" data-field="machine_name"><b>{{ r.machine_name or '-' }}</b></td>
+                <td class="editable" data-field="sn_number"><code>{{ r.sn_number or '-' }}</code></td>
+                <td class="editable" data-field="nic1_name">{{ r.nic1_name or '-' }}</td>
+                <td class="editable" data-field="nic1_mac"><code>{{ r.nic1_mac or '-' }}</code></td>
+                <td class="editable" data-field="nic2_name">{{ r.nic2_name or '-' }}</td>
+                <td class="editable" data-field="nic2_mac"><code>{{ r.nic2_mac or '-' }}</code></td>
+                <td class="editable" data-field="disk_gb">{{ r.disk_gb or '-' }}</td>
+                <td class="editable" data-field="memory_gb">{{ r.memory_gb or '-' }}</td>
+                <td>{{ r.upload_time }}</td>
+                <td>
+                    <a href="{{ url_for('uploaded_file', filename=r.image_path.split('/')[-1].split('\\')[-1]) }}" target="_blank">
+                        <img src="{{ url_for('uploaded_file', filename=r.image_path.split('/')[-1].split('\\')[-1]) }}">
+                    </a>
+                </td>
+                {% if is_admin %}
+                <td><button class="edit-btn" data-id="{{ r.id }}">✏️ 编辑</button></td>
+                {% endif %}
+            </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+        <div class="empty">还没有记录，赶快上传第一张图片吧 🚀</div>
+    {% endif %}
+
+</div>
+
+<script>
+var IS_ADMIN = {{ 'true' if is_admin else 'false' }};
+(function () {
+    var form = document.getElementById('upload-form');
+    var btn = document.getElementById('upload-btn');
+    var statusBox = document.getElementById('ocr-status');
+
+    form.addEventListener('submit', function (e) {
+        e.preventDefault();  // 阻止默认跳转，改为 AJAX
+
+        var fileInput = form.querySelector('input[type=file]');
+        if (!fileInput.files || fileInput.files.length === 0) {
+            console.warn('[OCR] 未选择文件');
+            return;
+        }
+
+        var fd = new FormData(form);
+        btn.disabled = true;
+        btn.textContent = '⏳ 识别中…';
+
+        // 控制台：开始调用
+        console.group('%c[OCR API 调用]', 'color:#667eea;font-weight:bold');
+        console.log('文件：', fileInput.files[0].name);
+        console.log('大小：', (fileInput.files[0].size / 1024).toFixed(1) + ' KB');
+        var t0 = performance.now();
+
+        fetch(form.action, {
+            method: 'POST',
+            body: fd,
+            headers: { 'Accept': 'application/json' }
+        })
+        .then(function (resp) {
+            return resp.json().then(function (data) {
+                return { ok: resp.ok, status: resp.status, data: data };
+            });
+        })
+        .then(function (r) {
+            var ms = ((performance.now() - t0) / 1000).toFixed(2);
+            if (r.ok && r.data.success) {
+                console.log('✅ 识别成功');
+                console.log('供应商 provider：', r.data.provider);
+                console.log('模型 model：', r.data.model);
+                console.log('服务端 OCR 耗时：', r.data.elapsed_seconds + 's');
+                console.log('整体请求耗时：', ms + 's');
+                console.log('提取字段数：', r.data.field_count);
+                console.log('结构化字段：', r.data.fields);
+                console.log('完整字段（含原文/原始响应）：', r.data);
+                console.log('原始大模型响应：', r.data.raw_response || '(无)');
+
+                statusBox.className = 'ocr-status show';
+                var fieldLines = Object.keys(r.data.fields).map(function (k) {
+                    return '<b>' + k + '</b>：' + escapeHtml(r.data.fields[k] || '(空)');
+                }).join('<br>');
+                statusBox.innerHTML =
+                    '<div class="ok">✅ 识别成功（供应商 ' + r.data.provider +
+                    '，模型 ' + r.data.model +
+                    '，耗时 ' + r.data.elapsed_seconds + 's）</div>' +
+                    '<div style="margin:8px 0; padding:10px; background:#f0f8ff; border-radius:6px; font-size:13px;">' +
+                    fieldLines + '</div>' +
+                    (r.data.raw_response ? '<details><summary style="cursor:pointer;color:#667eea;font-size:12px;">查看大模型原始返回</summary><pre>' + escapeHtml(r.data.raw_response) + '</pre></details>' : '');
+
+                // 历史记录表格自动插入新行
+                insertRecordRow(r.data);
+            } else {
+                var errMsg = (r.data && r.data.error) ? r.data.error : ('HTTP ' + r.status);
+                console.error('❌ 识别失败：', errMsg);
+                if (r.data) {
+                    console.log('供应商 provider：', r.data.provider);
+                    console.log('模型 model：', r.data.model);
+                }
+                statusBox.className = 'ocr-status show';
+                statusBox.innerHTML = '<div class="err">❌ 识别失败：' + escapeHtml(errMsg) + '</div>';
+            }
+        })
+        .catch(function (err) {
+            console.error('[OCR API 调用] 网络异常：', err);
+            statusBox.className = 'ocr-status show';
+            statusBox.innerHTML = '<div class="err">❌ 网络异常：' + escapeHtml(String(err)) + '</div>';
+        })
+        .finally(function () {
+            console.groupEnd();
+            btn.disabled = false;
+            btn.textContent = '🚀 开始识别';
+        });
+    });
+
+    function escapeHtml(s) {
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    // ---------- 历史记录表格自动刷新 ----------
+    var FIELD_ORDER = ['machine_name', 'sn_number', 'nic1_name', 'nic1_mac',
+                       'nic2_name', 'nic2_mac', 'disk_gb', 'memory_gb'];
+
+    function insertRecordRow(d) {
+        var f = d.fields || {};
+        function val(k) { return f[k] ? escapeHtml(f[k]) : '-'; }
+        var imgUrl = escapeHtml(d.image_url || '');
+
+        var rowHtml = '<tr data-id="' + d.record_id + '">' +
+            '<td class="editable" data-field="machine_name"><b>' + val('machine_name') + '</b></td>' +
+            '<td class="editable" data-field="sn_number"><code>' + val('sn_number') + '</code></td>' +
+            '<td class="editable" data-field="nic1_name">' + val('nic1_name') + '</td>' +
+            '<td class="editable" data-field="nic1_mac"><code>' + val('nic1_mac') + '</code></td>' +
+            '<td class="editable" data-field="nic2_name">' + val('nic2_name') + '</td>' +
+            '<td class="editable" data-field="nic2_mac"><code>' + val('nic2_mac') + '</code></td>' +
+            '<td class="editable" data-field="disk_gb">' + val('disk_gb') + '</td>' +
+            '<td class="editable" data-field="memory_gb">' + val('memory_gb') + '</td>' +
+            '<td>' + escapeHtml(d.upload_time || '') + '</td>' +
+            '<td><a href="' + imgUrl + '" target="_blank"><img src="' + imgUrl + '"></a></td>' +
+            (IS_ADMIN ? '<td><button class="edit-btn" data-id="' + d.record_id + '">✏️ 编辑</button></td>' : '') +
+            '</tr>';
+
+        var table = document.getElementById('records-table');
+        if (!table) {
+            // 之前没有记录（空状态提示），创建表格
+            var emptyDiv = document.querySelector('.empty');
+            table = document.createElement('table');
+            table.id = 'records-table';
+            table.innerHTML =
+                '<thead><tr>' +
+                '<th>机器名</th><th>SN号</th><th>网卡1</th><th>网卡1 MAC</th>' +
+                '<th>网卡2</th><th>网卡2 MAC</th><th>硬盘(GB)</th><th>内存(GB)</th>' +
+                '<th>上传时间</th><th>原图</th>' +
+                (IS_ADMIN ? '<th>操作</th>' : '') +
+                '</tr></thead><tbody>' + rowHtml + '</tbody>';
+            if (emptyDiv) {
+                emptyDiv.parentNode.replaceChild(table, emptyDiv);
+            }
+        } else {
+            // 已有表格：新记录插入到最顶部（列表按时间倒序）
+            var tbody = table.querySelector('tbody');
+            tbody.insertAdjacentHTML('afterbegin', rowHtml);
+            // 闪一下高亮，提示新行
+            var newRow = tbody.querySelector('tr');
+            newRow.style.background = '#e8f4ff';
+            setTimeout(function () { newRow.style.background = ''; }, 2000);
+        }
+
+        // 更新记录条数
+        var h3 = document.querySelector('.toolbar h3');
+        if (h3) {
+            var m = h3.textContent.match(/(\d+)/);
+            var count = m ? parseInt(m[1], 10) + 1 : 1;
+            h3.textContent = '📊 历史记录（' + count + ' 条）';
+        }
+    }
+})();
+</script>
+
+{% if is_admin %}
+<!-- 编辑弹窗 -->
+<div class="modal-mask" id="edit-mask">
+    <div class="modal">
+        <div class="modal-head">
+            <span>✏️ 编辑记录 #<span id="edit-id"></span></span>
+            <span class="close" id="edit-close">&times;</span>
+        </div>
+        <div class="modal-body">
+            <div class="field-grid">
+                <div>
+                    <label>机器名</label>
+                    <input id="f-machine_name">
+                </div>
+                <div>
+                    <label>SN号</label>
+                    <input id="f-sn_number">
+                </div>
+                <div>
+                    <label>网卡1名称</label>
+                    <input id="f-nic1_name">
+                </div>
+                <div>
+                    <label>网卡1 MAC</label>
+                    <input id="f-nic1_mac" placeholder="如 80:CA:52:C8:1A:21">
+                </div>
+                <div>
+                    <label>网卡2名称</label>
+                    <input id="f-nic2_name">
+                </div>
+                <div>
+                    <label>网卡2 MAC</label>
+                    <input id="f-nic2_mac" placeholder="如 14:B5:CD:AC:F7:3B">
+                </div>
+                <div>
+                    <label>硬盘(GB)</label>
+                    <input id="f-disk_gb">
+                </div>
+                <div>
+                    <label>内存(GB)</label>
+                    <input id="f-memory_gb">
+                </div>
+            </div>
+            <div class="save-msg" id="edit-msg"></div>
+        </div>
+        <div class="modal-foot">
+            <button class="cancel" id="edit-cancel">取消</button>
+            <button class="save" id="edit-save">保存</button>
+        </div>
+    </div>
+</div>
+
+<script>
+(function () {
+    var mask = document.getElementById('edit-mask');
+    var editId = document.getElementById('edit-id');
+    var msg = document.getElementById('edit-msg');
+    var fieldKeys = ['machine_name', 'sn_number', 'nic1_name', 'nic1_mac',
+                     'nic2_name', 'nic2_mac', 'disk_gb', 'memory_gb'];
+
+    // 打开编辑弹窗（事件委托：动态插入的新行也能响应）
+    document.addEventListener('click', function (e) {
+        var btn = e.target.closest ? e.target.closest('.edit-btn') : null;
+        if (!btn) return;
+        var id = btn.getAttribute('data-id');
+        var row = document.querySelector('tr[data-id="' + id + '"]');
+        if (!row) return;
+        editId.textContent = id;
+        msg.textContent = '';
+        // 从行里读取当前值填入表单
+        fieldKeys.forEach(function (k) {
+            var cell = row.querySelector('td[data-field="' + k + '"]');
+            var val = cell ? cell.textContent.trim() : '';
+            if (val === '-') val = '';
+            document.getElementById('f-' + k).value = val;
+        });
+        mask.classList.add('show');
+    });
+
+    function closeModal() {
+        mask.classList.remove('show');
+    }
+    document.getElementById('edit-close').addEventListener('click', closeModal);
+    document.getElementById('edit-cancel').addEventListener('click', closeModal);
+    mask.addEventListener('click', function (e) {
+        if (e.target === mask) closeModal();
+    });
+
+    // 保存
+    document.getElementById('edit-save').addEventListener('click', function () {
+        var id = editId.textContent;
+        var payload = {};
+        fieldKeys.forEach(function (k) {
+            payload[k] = document.getElementById('f-' + k).value.trim();
+        });
+
+        fetch('/api/record/' + id, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        })
+        .then(function (resp) { return resp.json(); })
+        .then(function (data) {
+            if (data.success) {
+                msg.innerHTML = '<span style="color:#155724;">✅ 保存成功</span>';
+                console.log('[编辑] 记录#' + id + ' 已更新：', payload);
+                // 更新表格对应单元格
+                var row = document.querySelector('tr[data-id="' + id + '"]');
+                fieldKeys.forEach(function (k) {
+                    var cell = row.querySelector('td[data-field="' + k + '"]');
+                    if (cell) cell.textContent = payload[k] || '-';
+                });
+                setTimeout(closeModal, 600);
+            } else {
+                msg.innerHTML = '<span style="color:#c0392b;">❌ ' + escapeHtml(data.error || '保存失败') + '</span>';
+            }
+        })
+        .catch(function (err) {
+            msg.innerHTML = '<span style="color:#c0392b;">❌ 网络错误：' + escapeHtml(String(err)) + '</span>';
+        });
+    });
+
+    function escapeHtml(s) {
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+                        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+})();
+</script>
+{% endif %}
+
+</body>
+</html>
