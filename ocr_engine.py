@@ -17,14 +17,25 @@ CONFIG_PATH = os.path.join(BASE_DIR, 'ocr_config.json')
 
 def load_config() -> dict:
     """加载 OCR 供应商配置"""
-    with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
-        return json.load(f)
+    try:
+        with open(CONFIG_PATH, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+    except FileNotFoundError as exc:
+        raise RuntimeError('未找到 OCR 配置文件，请复制 ocr_config.example.json 为 ocr_config.json') from exc
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f'OCR 配置文件不是有效 JSON（第 {exc.lineno} 行）') from exc
+    if not isinstance(config, dict):
+        raise RuntimeError('OCR 配置文件顶层必须是 JSON 对象')
+    return config
 
 
 def get_provider() -> str:
     """返回当前选用的 OCR 供应商名称"""
     cfg = load_config()
-    return cfg.get('provider', 'siliconflow')
+    provider = str(cfg.get('provider', 'siliconflow')).strip().lower()
+    if not provider:
+        raise RuntimeError('OCR 配置未指定 provider')
+    return provider
 
 
 # ---------------- 图片预处理 ----------------
@@ -89,11 +100,21 @@ def _call_openai_vision(cfg: dict, image_path: str) -> str:
       - user 消息 = [图片, 文本指令]   ← 指令必须跟图片放一起
       - system 消息 = 可选（仅当配置了 system_prompt 才发送）
     """
-    api_base = cfg['api_base'].rstrip('/')
+    if not isinstance(cfg, dict):
+        raise RuntimeError('OCR 供应商配置无效')
+    api_base = str(cfg.get('api_base', '')).strip().rstrip('/')
+    if not api_base:
+        raise RuntimeError('OCR API 地址未配置，请检查 ocr_config.json')
     api_key = cfg.get('api_key', '')
     model = cfg.get('model', 'deepseek-ai/DeepSeek-OCR')
-    timeout = cfg.get('timeout', 120)
-    max_tokens = cfg.get('max_tokens', 4096)
+    try:
+        timeout = max(1, float(cfg.get('timeout', 120)))
+    except (TypeError, ValueError):
+        timeout = 120
+    try:
+        max_tokens = max(1, int(cfg.get('max_tokens', 4096)))
+    except (TypeError, ValueError):
+        max_tokens = 4096
     # 采样参数（对齐官方网页默认值）
     temperature = cfg.get('temperature', 0.0)
     top_p = cfg.get('top_p', 0.7)
@@ -259,7 +280,8 @@ def _parse_markdown_table(text: str) -> dict:
                 base = re.sub(r'_name$', '', last_key)
                 result[base + '_mac'] = v
             continue
-        result[norm_key] = v
+        if norm_key:
+            result[norm_key] = v
         last_key = norm_key
 
     return result
@@ -303,7 +325,8 @@ def _parse_html_table(text: str) -> dict:
                 base = re.sub(r'_name$', '', last_key)
                 result[base + '_mac'] = v
             continue
-        result[norm_key] = v
+        if norm_key:
+            result[norm_key] = v
         last_key = norm_key
 
     return result
@@ -422,8 +445,10 @@ def _normalize_fields(raw: dict) -> dict:
     def first(*keys):
         for k in keys:
             v = raw.get(k)
-            if v and isinstance(v, str):
-                return v.strip()
+            if isinstance(v, (str, int, float)) and not isinstance(v, bool):
+                value = str(v).strip()
+                if value:
+                    return value
         return ''
 
     # 除网卡名称的系统索引前缀外，其余字段不做二次加工，

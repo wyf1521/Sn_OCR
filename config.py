@@ -12,6 +12,8 @@ class Config:
     # A folder upload may contain many screenshots. Individual files are
     # still filtered by extension, while the request cap covers the batch.
     MAX_CONTENT_LENGTH = 512 * 1024 * 1024  # 512MB per batch
+    MAX_FILE_SIZE = 20 * 1024 * 1024  # 20MB per image
+    MAX_BATCH_FILES = 500
     ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'bmp', 'webp'}
 
     # 数据文件
@@ -24,5 +26,14 @@ class Config:
 
     # 内部用户账号；部署时设置 SN_OCR_ADMIN_PASSWORD。
     USERS = {
-        'admin': '773668',
+        'admin': os.environ.get('SN_OCR_ADMIN_PASSWORD', ''),
+    }
+
+    # Keep browser sessions usable in local development while allowing a
+    # stable, operator-managed key in production.  Deployments should always
+    # set SECRET_KEY explicitly; the fallback is intentionally ephemeral.
+    SESSION_COOKIE_HTTPONLY = True
+    SESSION_COOKIE_SAMESITE = 'Lax'
+    SESSION_COOKIE_SECURE = os.environ.get('SN_OCR_COOKIE_SECURE', '').lower() in {
+        '1', 'true', 'yes', 'on'
     }

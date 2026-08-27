@@ -4,11 +4,11 @@
 
 ## 功能
 
-- 🔐 内部账号登录（账号密码，硬编码在 `config.py`）
+- 🔐 内部账号登录（管理员密码从 `SN_OCR_ADMIN_PASSWORD` 环境变量读取）
 - 📷 图片上传 → 自动 OCR（调用 OpenAI 兼容的大模型 API）
 - 🧾 结构化字段提取（机器名 / 网卡1 / 网卡2 / MAC / 硬盘 / 内存 / SN）
 - 💾 数据永久保存到 SQLite，所有登录用户共享记录
-- 📊 一键导出全部记录为 `.xlsx`
+- 📊 一键导出已审核记录为 `.xlsx`，并按机器名排序、嵌入原图
 - 🌐 简单的 `/api/records` JSON API 便于对接其他系统
 
 ## OCR 配置（重点）
@@ -115,7 +115,7 @@ server {
     listen 80;
     server_name ocr.your-domain.com;
 
-    client_max_body_size 20M;
+    client_max_body_size 512M;
 
     location / {
         proxy_pass http://127.0.0.1:5000;
@@ -176,6 +176,8 @@ sudo systemctl enable --now sn_ocr
 ## 账号
 
 账号固定为 `admin`，密码由 `SN_OCR_ADMIN_PASSWORD` 环境变量提供，不再写入仓库。
+
+未设置该环境变量时不会启用管理员登录，避免部署时使用空密码。生产环境还应设置稳定的 `SECRET_KEY`；开发环境未设置时会使用临时密钥，重启后已有会话需要重新登录。
 
 ## API
 

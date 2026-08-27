@@ -10,6 +10,7 @@ def get_conn():
     conn = sqlite3.connect(Config.DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute('PRAGMA foreign_keys = ON')
+    conn.execute('PRAGMA busy_timeout = 30000')
     return conn
 
 
@@ -18,6 +19,9 @@ def init_db():
     os.makedirs(Config.DATA_FOLDER, exist_ok=True)
     conn = get_conn()
     cur = conn.cursor()
+    # WAL is persistent database state; configure it once during startup
+    # instead of paying the mode-switch cost on every read connection.
+    cur.execute('PRAGMA journal_mode = WAL')
     # OCR 识别结果表
     cur.execute('''
         CREATE TABLE IF NOT EXISTS ocr_records (
@@ -59,6 +63,24 @@ def init_db():
             FOREIGN KEY (record_id) REFERENCES ocr_records(id) ON DELETE CASCADE
         )
     ''')
+    # These indexes cover the duplicate check and the common UI/export query
+    # paths without changing the existing schema or stored values.
+    cur.execute('''
+        CREATE INDEX IF NOT EXISTS idx_ocr_records_sn_normalized
+        ON ocr_records (lower(trim(sn_number)))
+    ''')
+    cur.execute('''
+        CREATE INDEX IF NOT EXISTS idx_ocr_records_upload_time
+        ON ocr_records (upload_time DESC)
+    ''')
+    cur.execute('''
+        CREATE INDEX IF NOT EXISTS idx_ocr_records_reviewed
+        ON ocr_records (reviewed)
+    ''')
+    cur.execute('''
+        CREATE INDEX IF NOT EXISTS idx_ocr_fields_record
+        ON ocr_fields (record_id)
+    ''')
     conn.commit()
     conn.close()
 
@@ -67,6 +89,9 @@ def save_record(username, image_name, image_path, parsed: dict, full_text: str):
     """保存一条 OCR 识别记录"""
     conn = get_conn()
     cur = conn.cursor()
+    # Serialize the check-and-insert pair so concurrent folder uploads cannot
+    # both pass the duplicate-SN check.
+    conn.execute('BEGIN IMMEDIATE')
     sn_number = str(parsed.get('sn_number', '') or '').strip()
     if sn_number:
         cur.execute('SELECT id FROM ocr_records WHERE lower(trim(sn_number))=lower(?) LIMIT 1', (sn_number,))
@@ -173,6 +198,10 @@ def find_record_by_sn(sn_number: str):
 
 def list_records(username=None, limit=500):
     """查询识别记录，username 不为空时按用户过滤"""
+    try:
+        limit = max(1, min(int(limit), 5000))
+    except (TypeError, ValueError):
+        limit = 500
     conn = get_conn()
     cur = conn.cursor()
     if username:

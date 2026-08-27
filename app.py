@@ -2,12 +2,14 @@
 import os
 import time
 import uuid
+import logging
 from functools import wraps
 from flask import (
     Flask, render_template, request, redirect, url_for, session,
     flash, send_from_directory, send_file, jsonify
 )
 from werkzeug.utils import secure_filename
+from werkzeug.exceptions import RequestEntityTooLarge
 from config import Config
 import database
 import ocr_engine
@@ -16,6 +18,7 @@ import excel_export
 
 app = Flask(__name__)
 app.config.from_object(Config)
+logger = logging.getLogger(__name__)
 
 
 # ---------- 初始化 ----------
@@ -25,27 +28,67 @@ os.makedirs(Config.UPLOAD_FOLDER, exist_ok=True)
 
 # ---------- 辅助 ----------
 def allowed_file(filename: str) -> bool:
+    if not isinstance(filename, str):
+        return False
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in Config.ALLOWED_EXTENSIONS
+
+
+def _validate_upload(file) -> str:
+    """Validate one upload and return its normalized client filename."""
+    original_name = (getattr(file, 'filename', '') or '').replace('\\', '/').strip()
+    if not original_name:
+        raise ValueError('文件名为空')
+    if not allowed_file(original_name):
+        raise ValueError(f'不支持的文件格式: {original_name}')
+    content_length = getattr(file, 'content_length', None)
+    if content_length and content_length > Config.MAX_FILE_SIZE:
+        raise ValueError(f'单张图片不能超过 {Config.MAX_FILE_SIZE // (1024 * 1024)}MB')
+    return original_name
+
+
+def _image_artifact_paths(image_path: str):
+    """Return the original image and all derived cache paths for one image."""
+    if not image_path:
+        return set()
+    basename = os.path.basename(image_path)
+    return {
+        image_path,
+        os.path.join(Config.DATA_FOLDER, 'image_cache', basename),
+        os.path.join(Config.DATA_FOLDER, 'image_cache', 'thumbs', basename),
+    }
+
+
+def _remove_image_artifacts(image_path: str):
+    """Best-effort cleanup; returns errors instead of masking the main result."""
+    errors = []
+    for path in _image_artifact_paths(image_path):
+        try:
+            if os.path.isfile(path):
+                os.remove(path)
+        except OSError as exc:
+            errors.append(str(exc))
+    return errors
 
 
 def _process_uploaded_file(file, duplicate_policy='skip', overwrite_record_id=None,
                            previous_image_path=None):
     """Save one uploaded image, run OCR, and persist its structured fields."""
-    original_name = (file.filename or '').replace('\\', '/').strip()
-    if not original_name:
-        raise ValueError('文件名为空')
-    if not allowed_file(original_name):
-        raise ValueError(f'不支持的文件格式: {original_name}')
+    original_name = _validate_upload(file)
 
     ext = original_name.rsplit('.', 1)[1].lower()
     new_name = f"{uuid.uuid4().hex}.{ext}"
     save_path = os.path.join(Config.UPLOAD_FOLDER, secure_filename(new_name))
     file.save(save_path)
-    provider = ocr_engine.get_provider()
-    cfg = ocr_engine.load_config()
-    ocr_model = cfg.get(provider, {}).get('model', '')
+    if os.path.getsize(save_path) > Config.MAX_FILE_SIZE:
+        _remove_image_artifacts(save_path)
+        raise ValueError(f'单张图片不能超过 {Config.MAX_FILE_SIZE // (1024 * 1024)}MB')
+    provider = ''
+    ocr_model = ''
     start = time.time()
     try:
+        provider = ocr_engine.get_provider()
+        cfg = ocr_engine.load_config()
+        ocr_model = cfg.get(provider, {}).get('model', '')
         parsed = ocr_engine.run_ocr(save_path)
         elapsed = round(time.time() - start, 2)
         if not isinstance(parsed, dict):
@@ -82,11 +125,7 @@ def _process_uploaded_file(file, duplicate_policy='skip', overwrite_record_id=No
                 raise ValueError('原记录不存在，无法覆盖')
             old_path = previous_image_path
             if old_path and os.path.abspath(old_path) != os.path.abspath(save_path):
-                try:
-                    if os.path.isfile(old_path):
-                        os.remove(old_path)
-                except OSError:
-                    pass
+                _remove_image_artifacts(old_path)
             fields = {k: v for k, v in parsed.items() if not k.startswith('_')}
             return {
                 'success': True, 'overwritten': True,
@@ -114,11 +153,7 @@ def _process_uploaded_file(file, duplicate_policy='skip', overwrite_record_id=No
                     raise RuntimeError('无法覆盖已有记录')
                 old_path = duplicate.get('image_path')
                 if old_path and os.path.abspath(old_path) != os.path.abspath(save_path):
-                    try:
-                        if os.path.isfile(old_path):
-                            os.remove(old_path)
-                    except OSError:
-                        pass
+                    _remove_image_artifacts(old_path)
                 fields = {k: v for k, v in parsed.items() if not k.startswith('_')}
                 return {
                     'success': True, 'overwritten': True,
@@ -130,11 +165,7 @@ def _process_uploaded_file(file, duplicate_policy='skip', overwrite_record_id=No
                     'upload_time': time.strftime('%Y-%m-%d %H:%M:%S'),
                     'message': f"SN {parsed.get('sn_number', '')} 已覆盖原记录",
                 }
-            try:
-                if os.path.isfile(save_path):
-                    os.remove(save_path)
-            except OSError:
-                pass
+            _remove_image_artifacts(save_path)
             return {
                 'success': True, 'duplicate': True,
                 'duplicate_record_id': duplicate.get('id') if duplicate else None,
@@ -156,11 +187,7 @@ def _process_uploaded_file(file, duplicate_policy='skip', overwrite_record_id=No
             'upload_time': time.strftime('%Y-%m-%d %H:%M:%S'),
         }
     except Exception:
-        try:
-            if os.path.isfile(save_path):
-                os.remove(save_path)
-        except OSError:
-            pass
+        _remove_image_artifacts(save_path)
         raise
 
 
@@ -171,6 +198,18 @@ def login_required(f):
             return redirect(url_for('login'))
         return f(*args, **kwargs)
     return wrapper
+
+
+@app.errorhandler(RequestEntityTooLarge)
+def request_entity_too_large(_error):
+    """Keep oversized batch uploads machine-readable when called via fetch."""
+    if request.headers.get('Accept', '').find('application/json') >= 0:
+        return jsonify({
+            'success': False,
+            'error': f'上传请求不能超过 {Config.MAX_CONTENT_LENGTH // (1024 * 1024)}MB',
+        }), 413
+    flash(f'上传请求不能超过 {Config.MAX_CONTENT_LENGTH // (1024 * 1024)}MB', 'danger')
+    return redirect(url_for('index'))
 
 
 # ---------- 路由 ----------
@@ -189,7 +228,8 @@ def login():
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
-        if username in Config.USERS and Config.USERS[username] == password:
+        expected_password = Config.USERS.get(username, '')
+        if expected_password and expected_password == password:
             session['user'] = username
             session.permanent = True
             flash(f'欢迎，{username}', 'success')
@@ -205,6 +245,7 @@ def logout():
 
 
 @app.route('/upload', methods=['POST'])
+@app.route('/upload-legacy', methods=['POST'])
 @login_required
 def upload_batch():
     """Process one image or a browser-selected folder of images."""
@@ -223,17 +264,27 @@ def upload_batch():
             return jsonify({'success': False, 'error': '没有收到上传文件，请确认已选择文件夹中的图片文件'}), 400
         flash('没有上传文件', 'danger')
         return redirect(url_for('index'))
+    if len(files) > Config.MAX_BATCH_FILES:
+        message = f'一次最多上传 {Config.MAX_BATCH_FILES} 张图片'
+        if want_json:
+            return jsonify({'success': False, 'error': message}), 413
+        flash(message, 'danger')
+        return redirect(url_for('index'))
 
     results = []
     for uploaded in files:
         try:
             result = _process_uploaded_file(uploaded, duplicate_policy=duplicate_policy)
             results.append(result)
-            print(f"[OCR] {result['image_name']} elapsed={result.get('elapsed_seconds', 0)}s "
-                  f"fields={result.get('field_count', 0)} duplicate={result.get('duplicate', False)}")
+            logger.info("OCR completed image=%s elapsed=%ss fields=%s duplicate=%s",
+                        result['image_name'], result.get('elapsed_seconds', 0),
+                        result.get('field_count', 0), result.get('duplicate', False))
+        except ValueError as exc:
+            results.append({'success': False, 'image_name': uploaded.filename, 'error': str(exc)})
+            logger.warning('OCR upload rejected image=%s reason=%s', uploaded.filename, exc)
         except Exception as exc:
             results.append({'success': False, 'image_name': uploaded.filename, 'error': str(exc)})
-            print(f'[OCR] {uploaded.filename} failed: {exc}')
+            logger.exception('OCR failed image=%s', uploaded.filename)
 
     succeeded = [r for r in results if r.get('success')]
     failed = [r for r in results if not r.get('success')]
@@ -248,104 +299,6 @@ def upload_batch():
     flash(f'批量识别完成：成功 {len(succeeded)} 张，失败 {len(failed)} 张',
           'success' if succeeded else 'danger')
     return redirect(url_for('index'))
-
-
-@app.route('/upload-legacy', methods=['POST'])
-@login_required
-def upload():
-    """上传图片并执行 OCR，返回 JSON 结果（供前端在控制台输出）"""
-    # 是否希望用 JSON 响应（前端 fetch 请求会带 Accept: application/json）
-    want_json = request.headers.get('Accept', '').find('application/json') >= 0
-
-    def _err(message, status=400):
-        if want_json:
-            return jsonify({'success': False, 'error': message}), status
-        flash(message, 'danger')
-        return redirect(url_for('index'))
-
-    if 'file' not in request.files:
-        return _err('没有上传文件')
-    file = request.files['file']
-    if file.filename == '':
-        return _err('文件名为空')
-    if not allowed_file(file.filename):
-        return _err('只支持 png/jpg/jpeg/bmp/webp 格式')
-
-    # 保存文件（使用 uuid 避免重名）
-    ext = file.filename.rsplit('.', 1)[1].lower()
-    new_name = f"{uuid.uuid4().hex}.{ext}"
-    save_path = os.path.join(Config.UPLOAD_FOLDER, secure_filename(new_name))
-    file.save(save_path)
-
-    # 记录 OCR 调用信息
-    provider = ocr_engine.get_provider()
-    cfg = ocr_engine.load_config()
-    ocr_model = cfg.get(provider, {}).get('model', '')
-    start = time.time()
-
-    try:
-        parsed = ocr_engine.run_ocr(save_path)
-        elapsed = round(time.time() - start, 2)
-
-        # 兜底：万一 run_ocr 返回了字符串，按老逻辑解析
-        if not isinstance(parsed, dict):
-            full_text = parsed or ''
-            parsed = ocr_engine.parse_fields(full_text)
-            parsed['_full_text'] = full_text
-
-        full_text = parsed.get('_full_text', '')
-        raw_response = parsed.get('_ocr_raw_response', '')
-
-        # 把大模型原始响应也存一份，方便后续排查
-        if raw_response:
-            parsed['_raw'] = str(raw_response)[:2000]
-
-        record_id = database.save_record(
-            username=session['user'],
-            image_name=file.filename,
-            image_path=save_path,
-            parsed=parsed,
-            full_text=full_text
-        )
-
-        field_count = len([k for k in parsed if not k.startswith('_')])
-        result = {
-            'success': True,
-            'record_id': record_id,
-            'provider': provider,
-            'model': ocr_model,
-            'elapsed_seconds': elapsed,
-            'field_count': field_count,
-            'fields': {k: v for k, v in parsed.items() if not k.startswith('_')},
-            'full_text': full_text,
-            'raw_response': raw_response,
-            # 供前端刷新历史记录表格使用
-            'image_url': url_for('uploaded_file', filename=new_name),
-            'image_name': file.filename,
-            'upload_time': time.strftime('%Y-%m-%d %H:%M:%S'),
-        }
-        # 服务端也打印一份 OCR 调用日志
-        print(f'[OCR] provider={provider} model={ocr_model} '
-              f'耗时={elapsed}s 字段数={field_count} 文本长度={len(full_text)}')
-
-        if want_json:
-            return jsonify(result)
-        flash(f'识别完成，共提取 {field_count} 个字段', 'success')
-        return redirect(url_for('index'))
-
-    except Exception as e:
-        elapsed = round(time.time() - start, 2)
-        print(f'[OCR] provider={provider} model={ocr_model} 失败 耗时={elapsed}s 错误={e}')
-        if want_json:
-            return jsonify({
-                'success': False,
-                'error': str(e),
-                'provider': provider,
-                'model': ocr_model,
-                'elapsed_seconds': elapsed,
-            }), 500
-        flash(f'识别失败：{e}', 'danger')
-        return redirect(url_for('index'))
 
 
 @app.route('/uploads/<path:filename>')
@@ -439,7 +392,7 @@ def reprocess_record(record_id):
             )
         return jsonify(result)
     except Exception as exc:
-        print(f'[OCR] reprocess record={record_id} failed: {exc}')
+        logger.exception('OCR reprocess failed record=%s', record_id)
         return jsonify({'success': False, 'error': str(exc)}), 500
 
 
@@ -454,20 +407,7 @@ def delete_record(record_id):
     if not database.delete_record(record_id):
         return jsonify({'success': False, 'error': '删除失败'}), 500
 
-    paths = {
-        record.get('image_path'),
-        os.path.join(Config.DATA_FOLDER, 'image_cache', os.path.basename(record.get('image_path', ''))),
-        os.path.join(Config.DATA_FOLDER, 'image_cache', 'thumbs', os.path.basename(record.get('image_path', ''))),
-    }
-    cleanup_errors = []
-    for path in paths:
-        if not path:
-            continue
-        try:
-            if os.path.isfile(path):
-                os.remove(path)
-        except OSError as exc:
-            cleanup_errors.append(str(exc))
+    cleanup_errors = _remove_image_artifacts(record.get('image_path'))
 
     response = {'success': True, 'record_id': record_id}
     if cleanup_errors:

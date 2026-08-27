@@ -355,9 +355,6 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
                     </a>
                 </td>
                 <td>
-                    <button type="button" class="review-btn {{ 'reviewed' if r.reviewed else '' }}" data-id="{{ r.id }}" data-reviewed="{{ 1 if r.reviewed else 0 }}">{{ '已审核' if r.reviewed else '未审核' }}</button>
-                </td>
-                <td>
                     <button class="reprocess-btn edit-btn" data-id="{{ r.id }}">重新识别</button>
                     <button class="edit-btn" data-id="{{ r.id }}">✏️ 编辑</button>
                     <button class="delete-btn" data-id="{{ r.id }}">🗑️ 删除</button>
@@ -609,11 +606,10 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
             '<td class="editable" data-field="person_name">' + val('person_name') + '</td>' +
             '<td class="editable" data-field="employee_id">' + val('employee_id') + '</td>' +
             '<td>' + escapeHtml(d.upload_time || '') + '</td>' +
-            '<td><button type="button" class="review-btn ' + (d.reviewed ? 'reviewed' : '') + '" data-id="' + d.record_id + '" data-reviewed="' + (d.reviewed ? '1' : '0') + '">' + (d.reviewed ? '已审核' : '未审核') + '</button></td>' +
             '<td><a href="' + imgUrl + '" target="_blank"><img class="record-image" src="' + imgUrl + '" alt="' + escapeHtml(d.image_name || '上传图片') + '"></a></td>' +
             '<td><button class="edit-btn" data-id="' + d.record_id + '">✏️ 编辑</button>' +
-            '<button class="delete-btn" data-id="' + d.record_id + '">🗑️ 删除</button></td>' +
-            '<button class="reprocess-btn edit-btn" data-id="' + d.record_id + '">重新识别</button>' +
+            '<button class="delete-btn" data-id="' + d.record_id + '">🗑️ 删除</button>' +
+            '<button class="reprocess-btn edit-btn" data-id="' + d.record_id + '">重新识别</button></td>' +
             '</tr>';
 
         var table = document.getElementById('records-table');
@@ -736,6 +732,10 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
             row.style.display = matchesMachine && matchesReview ? '' : 'none';
         });
     }
+    // The edit/review handlers live in the second script block below. Expose
+    // this closure deliberately at the page seam instead of relying on an
+    // out-of-scope function reference.
+    window.applyRecordFilters = applyRecordFilters;
     if (machineSearch) {
         machineSearch.addEventListener('input', applyRecordFilters);
     }
@@ -824,6 +824,29 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
 
 <script>
 (function () {
+    // Keep review actions functional even if the upload/table script is
+    // interrupted before it can publish its filter closure.
+    if (typeof window.applyRecordFilters !== 'function') {
+        window.applyRecordFilters = function () {
+            var search = document.getElementById('machine-search');
+            var filter = document.getElementById('review-filter');
+            var table = document.getElementById('records-table');
+            if (!table) return;
+            var query = search ? search.value.trim().toUpperCase() : '';
+            var mode = filter ? filter.value : 'all';
+            Array.prototype.forEach.call(table.querySelectorAll('tbody tr'), function (row) {
+                var machine = (row.getAttribute('data-machine-name') || '').trim().toUpperCase();
+                var button = row.querySelector('.review-btn');
+                var reviewed = button && button.getAttribute('data-reviewed') === '1';
+                var matchesMachine = !query || machine.indexOf(query) !== -1;
+                var matchesReview = mode === 'all' || (mode === 'reviewed' ? reviewed : !reviewed);
+                row.style.display = matchesMachine && matchesReview ? '' : 'none';
+            });
+        };
+    }
+})();
+
+(function () {
     var mask = document.getElementById('edit-mask');
     var imagePreviewMask = document.getElementById('image-preview-mask');
     var imagePreview = document.getElementById('image-preview');
@@ -849,7 +872,7 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
                   reviewBtn.setAttribute('data-reviewed', next ? '1' : '0');
                   reviewBtn.textContent = next ? '已审核' : '未审核';
                   reviewBtn.classList.toggle('reviewed', next);
-                  applyRecordFilters();
+                  window.applyRecordFilters();
               }).catch(function (err) { window.alert(err.message || String(err)); })
               .finally(function () { reviewBtn.disabled = false; });
             return;
