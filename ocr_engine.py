@@ -394,6 +394,15 @@ def _map_field_key(k: str) -> str:
     return ''
 
 
+def _clean_nic_name(value: str) -> str:
+    """Remove Windows adapter index prefixes such as ``[00000002]``."""
+    if not isinstance(value, str):
+        return ''
+    # Only strip bracketed 8-digit/hex markers at the beginning.  Brackets
+    # that are part of the adapter name itself remain untouched.
+    return re.sub(r'^(?:\s*\[[0-9A-Fa-f]{8}\]\s*)+', '', value).strip()
+
+
 def _normalize_fields(raw: dict) -> dict:
     """把大模型返回的 JSON 清洗成标准结构化字段"""
     norm = {
@@ -417,12 +426,12 @@ def _normalize_fields(raw: dict) -> dict:
                 return v.strip()
         return ''
 
-    # 以下字段【不做任何二次加工】，识别到什么就保留什么，
+    # 除网卡名称的系统索引前缀外，其余字段不做二次加工，
     # 由管理员在页面上人工核对和修正。
     norm['machine_name'] = first('machine_name', 'machinename', '机器名', 'hostname', 'host_name')
-    norm['nic1_name'] = first('nic1_name', 'nic1', 'nic_1_name', '网卡1名称', '网卡1', '网卡 1 名称')
+    norm['nic1_name'] = _clean_nic_name(first('nic1_name', 'nic1', 'nic_1_name', '网卡1名称', '网卡1', '网卡 1 名称'))
     norm['nic1_mac'] = first('nic1_mac', 'mac1', 'nic_1_mac', '网卡1物理地址', '网卡1 MAC', '网卡1MAC')
-    norm['nic2_name'] = first('nic2_name', 'nic2', 'nic_2_name', '网卡2名称', '网卡2', '网卡 2 名称')
+    norm['nic2_name'] = _clean_nic_name(first('nic2_name', 'nic2', 'nic_2_name', '网卡2名称', '网卡2', '网卡 2 名称'))
     norm['nic2_mac'] = first('nic2_mac', 'mac2', 'nic_2_mac', '网卡2物理地址', '网卡2 MAC', '网卡2MAC')
     norm['disk_gb'] = first('disk_gb', 'disk', '硬盘', '硬盘(GB)', 'disk_gb_value', 'diskGB')
     norm['memory_gb'] = first('memory_gb', 'memory', '内存', '内存(GB)', 'ram', 'ram_gb')
@@ -487,9 +496,13 @@ def parse_fields(full_text) -> dict:
 
     如果上游只返回纯文本，会走正则兜底。
     """
-    # 如果已经是结构化字段（dict），直接返回
+    # 如果已经是结构化字段（dict），复制后清理网卡名称，避免绕过归一化。
     if isinstance(full_text, dict):
-        return full_text
+        parsed = dict(full_text)
+        for key in ('nic1_name', 'nic2_name'):
+            if key in parsed:
+                parsed[key] = _clean_nic_name(parsed[key])
+        return parsed
 
     text = full_text or ''
     parsed = {}
@@ -499,7 +512,7 @@ def parse_fields(full_text) -> dict:
     if m:
         parsed['machine_name'] = m.group(1).strip()
 
-    # 网卡 1 / 2 —— 忠实保留识别原文（包括 [00000010] 前缀、大小写、单位）
+    # 网卡 1 / 2；清理 Windows 网卡名称前置的 [00000002] 标记。
     # 策略：两种匹配方式，取匹配结果更长的
     nic_blocks = []
 
@@ -522,10 +535,10 @@ def parse_fields(full_text) -> dict:
                 nic_blocks.append(m)
 
     if nic_blocks:
-        parsed['nic1_name'] = nic_blocks[0][0].strip()
+        parsed['nic1_name'] = _clean_nic_name(nic_blocks[0][0])
         parsed['nic1_mac'] = nic_blocks[0][1].strip()
     if len(nic_blocks) > 1:
-        parsed['nic2_name'] = nic_blocks[1][0].strip()
+        parsed['nic2_name'] = _clean_nic_name(nic_blocks[1][0])
         parsed['nic2_mac'] = nic_blocks[1][1].strip()
 
     # 硬盘、内存、SN：识别到啥就保留啥，不去单位/不二次加工

@@ -28,6 +28,142 @@ def allowed_file(filename: str) -> bool:
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in Config.ALLOWED_EXTENSIONS
 
 
+def _process_uploaded_file(file, duplicate_policy='skip', overwrite_record_id=None,
+                           previous_image_path=None):
+    """Save one uploaded image, run OCR, and persist its structured fields."""
+    original_name = (file.filename or '').replace('\\', '/').strip()
+    if not original_name:
+        raise ValueError('文件名为空')
+    if not allowed_file(original_name):
+        raise ValueError(f'不支持的文件格式: {original_name}')
+
+    ext = original_name.rsplit('.', 1)[1].lower()
+    new_name = f"{uuid.uuid4().hex}.{ext}"
+    save_path = os.path.join(Config.UPLOAD_FOLDER, secure_filename(new_name))
+    file.save(save_path)
+    provider = ocr_engine.get_provider()
+    cfg = ocr_engine.load_config()
+    ocr_model = cfg.get(provider, {}).get('model', '')
+    start = time.time()
+    try:
+        parsed = ocr_engine.run_ocr(save_path)
+        elapsed = round(time.time() - start, 2)
+        if not isinstance(parsed, dict):
+            full_text = parsed or ''
+            parsed = ocr_engine.parse_fields(full_text)
+            parsed['_full_text'] = full_text
+        full_text = parsed.get('_full_text', '')
+        machine_name = str(parsed.get('machine_name', '') or '').strip().upper()
+        if machine_name.startswith('YCSPBG'):
+            defaults = {
+                'brand': 'Lenovo', 'computer_model': '昭阳X5-14IAL',
+                'cpu': 'Intel(R) Core(TM) Ultra 5 225H 1.70 GHz',
+            }
+        elif machine_name.startswith('YCSPGW'):
+            defaults = {
+                'brand': 'HP', 'computer_model': 'HP Pro Tower 280 G9EPCI',
+                'cpu': '13th Gen Intel(R) Core(TM) i3-13100 3.40 GHz',
+            }
+        else:
+            defaults = {}
+        defaults.update({
+            'system_type': '64位操作系统', 'operating_system': 'Windows 11专业版',
+            'version': '24H2',
+        })
+        for key, value in defaults.items():
+            parsed.setdefault(key, value)
+        raw_response = parsed.get('_ocr_raw_response', '')
+        if raw_response:
+            parsed['_raw'] = str(raw_response)[:2000]
+        if overwrite_record_id is not None:
+            if not database.overwrite_record(
+                    overwrite_record_id, session['user'], original_name,
+                    save_path, parsed, full_text):
+                raise ValueError('原记录不存在，无法覆盖')
+            old_path = previous_image_path
+            if old_path and os.path.abspath(old_path) != os.path.abspath(save_path):
+                try:
+                    if os.path.isfile(old_path):
+                        os.remove(old_path)
+                except OSError:
+                    pass
+            fields = {k: v for k, v in parsed.items() if not k.startswith('_')}
+            return {
+                'success': True, 'overwritten': True,
+                'record_id': overwrite_record_id, 'provider': provider,
+                'model': ocr_model, 'elapsed_seconds': elapsed,
+                'field_count': len(fields), 'fields': fields,
+                'computer_type': excel_export._record_type(parsed),
+                'full_text': full_text, 'raw_response': raw_response,
+                'image_url': url_for('uploaded_file', filename=new_name),
+                'image_name': original_name,
+                'upload_time': time.strftime('%Y-%m-%d %H:%M:%S'),
+                'message': '已重新识别并覆盖原记录',
+            }
+
+        record_id = database.save_record(
+            username=session['user'], image_name=original_name,
+            image_path=save_path, parsed=parsed, full_text=full_text
+        )
+        if record_id is None:
+            duplicate = database.find_record_by_sn(parsed.get('sn_number', ''))
+            if duplicate_policy == 'overwrite' and duplicate:
+                if not database.overwrite_record(
+                        duplicate['id'], session['user'], original_name,
+                        save_path, parsed, full_text):
+                    raise RuntimeError('无法覆盖已有记录')
+                old_path = duplicate.get('image_path')
+                if old_path and os.path.abspath(old_path) != os.path.abspath(save_path):
+                    try:
+                        if os.path.isfile(old_path):
+                            os.remove(old_path)
+                    except OSError:
+                        pass
+                fields = {k: v for k, v in parsed.items() if not k.startswith('_')}
+                return {
+                    'success': True, 'overwritten': True,
+                    'record_id': duplicate['id'], 'provider': provider,
+                    'model': ocr_model, 'elapsed_seconds': elapsed,
+                    'field_count': len(fields), 'fields': fields,
+                    'image_url': url_for('uploaded_file', filename=new_name),
+                    'image_name': original_name,
+                    'upload_time': time.strftime('%Y-%m-%d %H:%M:%S'),
+                    'message': f"SN {parsed.get('sn_number', '')} 已覆盖原记录",
+                }
+            try:
+                if os.path.isfile(save_path):
+                    os.remove(save_path)
+            except OSError:
+                pass
+            return {
+                'success': True, 'duplicate': True,
+                'duplicate_record_id': duplicate.get('id') if duplicate else None,
+                'provider': provider, 'model': ocr_model,
+                'elapsed_seconds': elapsed,
+                'image_name': original_name,
+                'fields': {k: v for k, v in parsed.items() if not k.startswith('_')},
+                'message': f"SN {parsed.get('sn_number', '')} 已上传，跳过重复记录",
+            }
+        fields = {k: v for k, v in parsed.items() if not k.startswith('_')}
+        return {
+            'success': True, 'record_id': record_id, 'provider': provider,
+            'model': ocr_model, 'elapsed_seconds': elapsed,
+            'field_count': len(fields), 'fields': fields,
+            'computer_type': excel_export._record_type(parsed),
+            'full_text': full_text, 'raw_response': raw_response,
+            'image_url': url_for('uploaded_file', filename=new_name),
+            'image_name': original_name,
+            'upload_time': time.strftime('%Y-%m-%d %H:%M:%S'),
+        }
+    except Exception:
+        try:
+            if os.path.isfile(save_path):
+                os.remove(save_path)
+        except OSError:
+            pass
+        raise
+
+
 def login_required(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
@@ -69,6 +205,52 @@ def logout():
 
 
 @app.route('/upload', methods=['POST'])
+@login_required
+def upload_batch():
+    """Process one image or a browser-selected folder of images."""
+    want_json = request.headers.get('Accept', '').find('application/json') >= 0
+    duplicate_policy = request.form.get('duplicate_policy', 'skip').strip().lower()
+    if duplicate_policy not in {'skip', 'overwrite'}:
+        duplicate_policy = 'skip'
+    files = request.files.getlist('file') or request.files.getlist('files')
+    # Accept browser/framework variants such as files[] and unnamed parts.
+    if not files:
+        for key in request.files.keys():
+            files.extend(request.files.getlist(key))
+    files = [f for f in files if f and f.filename]
+    if not files:
+        if want_json:
+            return jsonify({'success': False, 'error': '没有收到上传文件，请确认已选择文件夹中的图片文件'}), 400
+        flash('没有上传文件', 'danger')
+        return redirect(url_for('index'))
+
+    results = []
+    for uploaded in files:
+        try:
+            result = _process_uploaded_file(uploaded, duplicate_policy=duplicate_policy)
+            results.append(result)
+            print(f"[OCR] {result['image_name']} elapsed={result.get('elapsed_seconds', 0)}s "
+                  f"fields={result.get('field_count', 0)} duplicate={result.get('duplicate', False)}")
+        except Exception as exc:
+            results.append({'success': False, 'image_name': uploaded.filename, 'error': str(exc)})
+            print(f'[OCR] {uploaded.filename} failed: {exc}')
+
+    succeeded = [r for r in results if r.get('success')]
+    failed = [r for r in results if not r.get('success')]
+    if want_json:
+        if len(files) == 1:
+            return jsonify(results[0]), 200 if succeeded else 500
+        return jsonify({
+            'success': bool(succeeded), 'total': len(files),
+            'succeeded': len(succeeded), 'failed': len(failed),
+            'results': results,
+        }), 200 if succeeded else 500
+    flash(f'批量识别完成：成功 {len(succeeded)} 张，失败 {len(failed)} 张',
+          'success' if succeeded else 'danger')
+    return redirect(url_for('index'))
+
+
+@app.route('/upload-legacy', methods=['POST'])
 @login_required
 def upload():
     """上传图片并执行 OCR，返回 JSON 结果（供前端在控制台输出）"""
@@ -176,19 +358,35 @@ def uploaded_file(filename):
 @app.route('/export')
 @login_required
 def export():
-    """导出全部记录为 Excel"""
-    # 导出与首页展示完全相同的记录范围和顺序。
-    records = database.list_records(limit=200)
+    """Export records merged into the YCSP inventory template."""
+    records = [r for r in database.list_records(limit=1000) if int(r.get('reviewed') or 0) == 1]
     if not records:
         flash('暂无数据可导出', 'warning')
         return redirect(url_for('index'))
 
     out_dir = os.path.join(Config.DATA_FOLDER, 'exports')
     os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, 'ocr_records.xlsx')
-    excel_export.export_to_excel(records, out_path)
+    out_path = os.path.join(out_dir, 'YCSP电脑信息_已填写.xlsx')
+    excel_export.export_to_template(records, output_path=out_path)
     return send_file(out_path, as_attachment=True,
-                     download_name='ocr_records.xlsx')
+                     download_name='YCSP电脑信息_已填写.xlsx')
+
+
+@app.route('/export/inventory')
+@login_required
+def export_inventory():
+    """Merge OCR records into the supplied workstation/office workbook."""
+    records = [r for r in database.list_records(limit=1000) if int(r.get('reviewed') or 0) == 1]
+    if not records:
+        flash('暂无数据可填写到电脑信息表', 'warning')
+        return redirect(url_for('index'))
+
+    out_dir = os.path.join(Config.DATA_FOLDER, 'exports')
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, 'YCSP电脑信息_已填写.xlsx')
+    excel_export.export_to_template(records, output_path=out_path)
+    return send_file(out_path, as_attachment=True,
+                     download_name='YCSP电脑信息_已填写.xlsx')
 
 
 @app.route('/api/records')
@@ -208,12 +406,41 @@ def update_record(record_id):
 
     # 过滤掉非字段的内容
     updates = {k: str(v).strip() for k, v in data.items() if isinstance(v, str)}
+    if 'reviewed' in data:
+        updates['reviewed'] = data['reviewed']
 
     ok = database.update_record(record_id, updates)
     if not ok:
         return jsonify({'success': False, 'error': '没有可更新的字段或记录不存在'}), 400
 
     return jsonify({'success': True, 'message': '更新成功', 'record': database.get_record(record_id)})
+
+
+@app.route('/api/record/<int:record_id>/reprocess', methods=['POST'])
+@login_required
+def reprocess_record(record_id):
+    """Run OCR again for an existing image and replace that record in place."""
+    record = database.get_record(record_id)
+    if not record:
+        return jsonify({'success': False, 'error': '记录不存在'}), 404
+    image_path = record.get('image_path') or ''
+    if not os.path.isfile(image_path):
+        return jsonify({'success': False, 'error': '原图片文件不存在'}), 404
+    try:
+        from werkzeug.datastructures import FileStorage
+        with open(image_path, 'rb') as stream:
+            uploaded = FileStorage(
+                stream=stream,
+                filename=record.get('image_name') or os.path.basename(image_path)
+            )
+            result = _process_uploaded_file(
+                uploaded, overwrite_record_id=record_id,
+                previous_image_path=image_path
+            )
+        return jsonify(result)
+    except Exception as exc:
+        print(f'[OCR] reprocess record={record_id} failed: {exc}')
+        return jsonify({'success': False, 'error': str(exc)}), 500
 
 
 @app.route('/api/record/<int:record_id>', methods=['DELETE'])

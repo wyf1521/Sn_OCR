@@ -59,6 +59,9 @@ header a:hover { text-decoration: underline; }
 .ocr-status .loading { color: #667eea; }
 .ocr-status .ok { color: #155724; }
 .ocr-status .err { color: #c0392b; }
+.ocr-progress { margin: 10px 0; }
+.ocr-progress progress { width: 100%; height: 12px; accent-color: #667eea; }
+.ocr-progress .progress-meta { display: flex; justify-content: space-between; margin-bottom: 5px; color: #667eea; }
 .ocr-status pre {
     background: #f5f5f5;
     border: 1px solid #ddd;
@@ -81,7 +84,21 @@ header a:hover { text-decoration: underline; }
     text-decoration: none;
     font-size: 14px;
 }
+.toolbar a.btn.inventory { background: #00695c; }
+.toolbar a.btn.inventory:hover { background: #005047; }
 .toolbar a.btn:hover { background: #218838; }
+.toolbar button.sort-btn {
+    margin-right: 8px;
+    padding: 8px 14px;
+    border: 1px solid #667eea;
+    border-radius: 6px;
+    background: #fff;
+    color: #667eea;
+    cursor: pointer;
+    font-size: 14px;
+}
+.toolbar button.sort-btn:hover { background: #eef0ff; }
+.machine-search { width: 190px; padding: 8px 10px; border: 1px solid #ccd2e5; border-radius: 6px; font-size: 14px; }
 
 .flash-bar { padding: 12px; border-radius: 6px; margin-bottom: 16px; }
 .flash-bar.success { background: #d4edda; color: #155724; }
@@ -106,6 +123,40 @@ th {
 td { padding: 10px 8px; border-bottom: 1px solid #eee; font-size: 13px; vertical-align: top; }
 tr:hover { background: #f9f9ff; }
 td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointer; border: 1px solid #ddd; }
+.record-image:hover { opacity: 0.82; }
+.image-preview-mask {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 1100;
+    padding: 28px;
+    background: rgba(0,0,0,0.82);
+    align-items: center;
+    justify-content: center;
+}
+.image-preview-mask.show { display: flex; }
+.image-preview-mask img {
+    max-width: 96vw;
+    max-height: 92vh;
+    object-fit: contain;
+    border-radius: 4px;
+    box-shadow: 0 8px 40px rgba(0,0,0,0.45);
+}
+.image-preview-close {
+    position: fixed;
+    top: 14px;
+    right: 22px;
+    width: 38px;
+    height: 38px;
+    border: 0;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.18);
+    color: #fff;
+    font-size: 26px;
+    line-height: 38px;
+    cursor: pointer;
+}
+.image-preview-close:hover { background: rgba(255,255,255,0.32); }
 .empty { padding: 40px; text-align: center; color: #999; }
 
 .edit-btn,
@@ -136,6 +187,11 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
     background: #dc3545;
 }
 .delete-btn:hover { background: #bd2130; }
+.reprocess-btn { background: #17a2b8; }
+.reprocess-btn:hover { background: #117a8b; }
+.review-btn { background: #6c757d; }
+.review-btn.reviewed { background: #28a745; }
+.review-btn:hover { filter: brightness(0.92); }
 
 /* 编辑弹窗 */
 .modal-mask {
@@ -219,11 +275,23 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
 
     <div class="upload-card">
         <h3>上传图片识别</h3>
-        <form id="upload-form" action="{{ url_for('upload') }}" method="POST" enctype="multipart/form-data">
-            <input type="file" name="file" accept="image/*" required>
+        <form id="upload-form" action="{{ url_for('upload_batch') }}" method="POST" enctype="multipart/form-data" novalidate>
+            <label>单张图片
+                <input id="image-input" type="file" name="file" accept=".png,.jpg,.jpeg,.bmp,.webp,image/*">
+            </label>
+            <label>整个文件夹
+                <input id="folder-input" type="file" name="file" accept=".png,.jpg,.jpeg,.bmp,.webp,image/*" webkitdirectory directory multiple>
+            </label>
+            <label>重复数据
+                <select id="duplicate-policy" name="duplicate_policy">
+                    <option value="skip" selected>跳过已有 SN</option>
+                    <option value="overwrite">覆盖已有数据</option>
+                </select>
+            </label>
+            <div id="folder-summary" style="font-size:12px;color:#667eea;margin-top:6px;"></div>
             <button type="submit" id="upload-btn">🚀 开始识别</button>
         </form>
-        <p style="color:#888; font-size:12px; margin: 12px 0 0 0;">支持 png / jpg / jpeg / bmp / webp 格式，单文件最大 16 MB</p>
+        <p style="color:#888; font-size:12px; margin: 12px 0 0 0;">可选择单张图片或整个文件夹，支持 png / jpg / jpeg / bmp / webp</p>
         <div id="ocr-status" class="ocr-status"></div>
     </div>
 
@@ -234,14 +302,23 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
     {% endwith %}
 
     <div class="toolbar">
+        <input type="search" id="machine-search" class="machine-search" placeholder="搜索机器名..." aria-label="搜索机器名">
+        <select id="review-filter" class="machine-search" aria-label="筛选审核状态">
+            <option value="all">全部记录</option>
+            <option value="reviewed">已审核</option>
+            <option value="unreviewed">未审核</option>
+        </select>
+        <button type="button" class="sort-btn" id="sort-upload-btn">上传时间：降序</button>
+        <button type="button" class="sort-btn" id="sort-machine-btn">机器名：升序</button>
         <h3 style="margin:0;">📊 历史记录（{{ records|length }} 条）</h3>
-        <a class="btn" href="{{ url_for('export') }}">📥 导出 Excel</a>
+        <a class="btn inventory" href="{{ url_for('export') }}">📋 填写并导出电脑信息表</a>
     </div>
 
     {% if records %}
     <table id="records-table">
         <thead>
             <tr>
+                <th>审核状态</th>
                 <th>机器名</th>
                 <th>SN号</th>
                 <th>网卡1</th>
@@ -250,6 +327,7 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
                 <th>网卡2 MAC</th>
                 <th>硬盘(GB)</th>
                 <th>内存(GB)</th>
+                <th>部门</th><th>姓名</th><th>工号</th>
                 <th>上传时间</th>
                 <th>原图</th>
                 <th>操作</th>
@@ -257,7 +335,8 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
         </thead>
         <tbody>
         {% for r in records %}
-            <tr data-id="{{ r.id }}">
+            <tr data-id="{{ r.id }}" data-machine-name="{{ r.machine_name or '' }}" data-upload-time="{{ r.upload_time or '' }}">
+                <td><button type="button" class="review-btn {{ 'reviewed' if r.reviewed else '' }}" data-id="{{ r.id }}" data-reviewed="{{ 1 if r.reviewed else 0 }}">{{ '已审核' if r.reviewed else '未审核' }}</button></td>
                 <td class="editable" data-field="machine_name"><b>{{ r.machine_name or '-' }}</b></td>
                 <td class="editable" data-field="sn_number"><code>{{ r.sn_number or '-' }}</code></td>
                 <td class="editable" data-field="nic1_name">{{ r.nic1_name or '-' }}</td>
@@ -266,13 +345,20 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
                 <td class="editable" data-field="nic2_mac"><code>{{ r.nic2_mac or '-' }}</code></td>
                 <td class="editable" data-field="disk_gb">{{ r.disk_gb or '-' }}</td>
                 <td class="editable" data-field="memory_gb">{{ r.memory_gb or '-' }}</td>
+                <td class="editable" data-field="department">{{ r.department or '-' }}</td>
+                <td class="editable" data-field="person_name">{{ r.person_name or '-' }}</td>
+                <td class="editable" data-field="employee_id">{{ r.employee_id or '-' }}</td>
                 <td>{{ r.upload_time }}</td>
                 <td>
                     <a href="{{ url_for('uploaded_file', filename=r.image_path.split('/')[-1].split('\\')[-1]) }}" target="_blank">
-                        <img src="{{ url_for('uploaded_file', filename=r.image_path.split('/')[-1].split('\\')[-1]) }}">
+                        <img class="record-image" src="{{ url_for('uploaded_file', filename=r.image_path.split('/')[-1].split('\\')[-1]) }}" alt="{{ r.image_name or '上传图片' }}">
                     </a>
                 </td>
                 <td>
+                    <button type="button" class="review-btn {{ 'reviewed' if r.reviewed else '' }}" data-id="{{ r.id }}" data-reviewed="{{ 1 if r.reviewed else 0 }}">{{ '已审核' if r.reviewed else '未审核' }}</button>
+                </td>
+                <td>
+                    <button class="reprocess-btn edit-btn" data-id="{{ r.id }}">重新识别</button>
                     <button class="edit-btn" data-id="{{ r.id }}">✏️ 编辑</button>
                     <button class="delete-btn" data-id="{{ r.id }}">🗑️ 删除</button>
                 </td>
@@ -291,24 +377,133 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
     var form = document.getElementById('upload-form');
     var btn = document.getElementById('upload-btn');
     var statusBox = document.getElementById('ocr-status');
+    var singleInput = document.getElementById('image-input');
+    var folderInput = document.getElementById('folder-input');
+    var duplicatePolicy = document.getElementById('duplicate-policy');
+    var folderSummary = document.getElementById('folder-summary');
+    if (singleInput) {
+        singleInput.addEventListener('change', function () {
+            if (singleInput.files.length) folderInput.value = '';
+            folderSummary.textContent = singleInput.files.length ? ('已选择单张图片：' + singleInput.files[0].name) : '';
+        });
+    }
+    if (folderInput) {
+        folderInput.addEventListener('change', function () {
+            if (folderInput.files.length) singleInput.value = '';
+            folderSummary.textContent = folderInput.files.length ? ('已选择文件夹，共 ' + folderInput.files.length + ' 个文件') : '';
+        });
+    }
+
+    // Allow screenshots or copied image files to be pasted directly into the page.
+    document.addEventListener('paste', function (e) {
+        if (e.target.closest && e.target.closest('input, textarea, select, [contenteditable="true"]')) return;
+        var items = Array.prototype.slice.call((e.clipboardData && e.clipboardData.items) || []);
+        var files = items.filter(function (item) { return item.kind === 'file' && item.type.indexOf('image/') === 0; })
+            .map(function (item) { return item.getAsFile(); }).filter(Boolean);
+        if (!files.length || !window.DataTransfer) return;
+        e.preventDefault();
+        var transfer = new DataTransfer();
+        files.forEach(function (file) { transfer.items.add(file); });
+        folderInput.value = '';
+        singleInput.files = transfer.files;
+        singleInput.dispatchEvent(new Event('change', { bubbles: true }));
+        if (form.requestSubmit) form.requestSubmit();
+    });
+    if (folderInput) {
+        folderInput.addEventListener('change', function () {
+            var count = (folderInput.files || []).length;
+            folderSummary.textContent = count ? ('已选择文件夹，共 ' + count + ' 个文件') : '';
+        });
+    }
+
+    // Process folder selections one file at a time so progress is visible while OCR runs.
+    form.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        var selectedFiles = Array.prototype.slice.call((folderInput && folderInput.files) || []);
+        if (!selectedFiles.length) selectedFiles = Array.prototype.slice.call((singleInput && singleInput.files) || []);
+        if (!selectedFiles.length) {
+            statusBox.className = 'ocr-status show';
+            statusBox.innerHTML = '<div class="err">请先选择一张图片或整个文件夹</div>';
+            return;
+        }
+        btn.disabled = true;
+        btn.textContent = '识别中...';
+        var done = 0, success = 0, failed = 0;
+        statusBox.className = 'ocr-status show';
+        statusBox.innerHTML = '<div class="ocr-progress"><div class="progress-meta"><span id="ocr-progress-label">准备识别...</span><span id="ocr-progress-percent">0%</span></div><progress id="ocr-progress-bar" value="0" max="' + selectedFiles.length + '"></progress></div><div id="ocr-current"></div><div id="ocr-results"></div>';
+        var bar = document.getElementById('ocr-progress-bar');
+        var label = document.getElementById('ocr-progress-label');
+        var percent = document.getElementById('ocr-progress-percent');
+        var current = document.getElementById('ocr-current');
+        var resultList = document.getElementById('ocr-results');
+        function processFile(file) {
+            return new Promise(function (resolve) {
+                var xhr = new XMLHttpRequest();
+                var fd = new FormData();
+                fd.append('file', file, file.name);
+                fd.append('duplicate_policy', duplicatePolicy ? duplicatePolicy.value : 'skip');
+                xhr.open('POST', form.action, true);
+                xhr.setRequestHeader('Accept', 'application/json');
+                xhr.onload = function () {
+                    var data = {};
+                    try { data = JSON.parse(xhr.responseText || '{}'); } catch (ignore) {}
+                    resolve({ ok: xhr.status >= 200 && xhr.status < 300 && data.success, data: data, status: xhr.status });
+                };
+                xhr.onerror = function () { resolve({ ok: false, data: { error: '网络连接失败' }, status: 0 }); };
+                xhr.send(fd);
+            });
+        }
+        for (var i = 0; i < selectedFiles.length; i++) {
+            var file = selectedFiles[i];
+            current.textContent = '正在识别：' + (file.webkitRelativePath || file.name);
+            var result = await processFile(file);
+            done++;
+            if (result.ok) {
+                success++;
+                if (!result.data.duplicate) insertRecordRow(result.data);
+            } else {
+                failed++;
+            }
+            bar.value = done;
+            label.textContent = '已完成 ' + done + ' / ' + selectedFiles.length + '，成功 ' + success + '，失败 ' + failed;
+            percent.textContent = Math.round(done * 100 / selectedFiles.length) + '%';
+            if (result.ok && result.data.overwritten) {
+                resultList.innerHTML += '<div class="ok">' + escapeHtml(file.name) + ': 已覆盖已有数据</div>';
+                continue;
+            }
+            var message = result.ok ? (result.data.duplicate ? '重复记录，已跳过' : '识别成功') : ('识别失败 - ' + ((result.data && result.data.error) || ('HTTP ' + result.status)));
+            resultList.innerHTML += '<div class="' + (result.ok ? 'ok' : 'err') + '">' + escapeHtml(file.name) + ': ' + escapeHtml(message) + '</div>';
+        }
+        current.textContent = '识别完成';
+        btn.disabled = false;
+        btn.textContent = '开始识别';
+    }, true);
 
     form.addEventListener('submit', function (e) {
+        // Kept for compatibility with cached markup; the capture handler above owns submission.
+        return;
         e.preventDefault();  // 阻止默认跳转，改为 AJAX
 
-        var fileInput = form.querySelector('input[type=file]');
-        if (!fileInput.files || fileInput.files.length === 0) {
+        var fileInputs = form.querySelectorAll('input[type=file]');
+        var selectedFiles = [];
+        Array.prototype.forEach.call(fileInputs, function (input) {
+            Array.prototype.forEach.call(input.files || [], function (file) { selectedFiles.push(file); });
+        });
+        if (selectedFiles.length === 0) {
             console.warn('[OCR] 未选择文件');
             return;
         }
 
-        var fd = new FormData(form);
+        var fd = new FormData();
+        selectedFiles.forEach(function (file) { fd.append('file', file, file.name); });
         btn.disabled = true;
         btn.textContent = '⏳ 识别中…';
 
         // 控制台：开始调用
         console.group('%c[OCR API 调用]', 'color:#667eea;font-weight:bold');
-        console.log('文件：', fileInput.files[0].name);
-        console.log('大小：', (fileInput.files[0].size / 1024).toFixed(1) + ' KB');
+        console.log('文件数量：', selectedFiles.length);
+        console.log('文件：', selectedFiles.map(function (file) { return file.name; }));
         var t0 = performance.now();
 
         fetch(form.action, {
@@ -329,14 +524,23 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
                 console.log('模型 model：', r.data.model);
                 console.log('服务端 OCR 耗时：', r.data.elapsed_seconds + 's');
                 console.log('整体请求耗时：', ms + 's');
-                console.log('提取字段数：', r.data.field_count);
-                console.log('结构化字段：', r.data.fields);
+                console.log('提取字段数：', r.data.field_count || r.data.succeeded);
+                console.log('结构化字段：', r.data.fields || r.data.results);
                 console.log('完整字段（含原文/原始响应）：', r.data);
                 console.log('原始大模型响应：', r.data.raw_response || '(无)');
 
+                if (r.data.results) {
+                    r.data.fields = {};
+                    r.data.results.forEach(function (item) {
+                        if (item.success) item.fields = item.fields || {};
+                    });
+                }
                 statusBox.className = 'ocr-status show';
-                var fieldLines = Object.keys(r.data.fields).map(function (k) {
-                    return '<b>' + k + '</b>：' + escapeHtml(r.data.fields[k] || '(空)');
+                var batchResults = r.data.results || [r.data];
+                var fieldLines = batchResults.map(function (item) {
+                    if (item.duplicate) return '<b>' + escapeHtml(item.image_name || '') + '</b>: duplicate SN, skipped';
+                    if (!item.success) return '<b>' + escapeHtml(item.image_name || '') + '</b>: failed - ' + escapeHtml(item.error || 'unknown error');
+                    return '<b>' + escapeHtml(item.image_name || '') + '</b>: success, ' + (item.field_count || 0) + ' fields';
                 }).join('<br>');
                 statusBox.innerHTML =
                     '<div class="ok">✅ 识别成功（供应商 ' + r.data.provider +
@@ -347,7 +551,13 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
                     (r.data.raw_response ? '<details><summary style="cursor:pointer;color:#667eea;font-size:12px;">查看大模型原始返回</summary><pre>' + escapeHtml(r.data.raw_response) + '</pre></details>' : '');
 
                 // 历史记录表格自动插入新行
-                insertRecordRow(r.data);
+                if (r.data.results) {
+                    r.data.results.forEach(function (item) {
+                        if (item.success && !item.duplicate) insertRecordRow(item);
+                    });
+                } else {
+                    if (!r.data.duplicate) insertRecordRow(r.data);
+                }
             } else {
                 var errMsg = (r.data && r.data.error) ? r.data.error : ('HTTP ' + r.status);
                 console.error('❌ 识别失败：', errMsg);
@@ -367,7 +577,7 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
         .finally(function () {
             console.groupEnd();
             btn.disabled = false;
-            btn.textContent = '🚀 开始识别';
+            btn.textContent = '🚀 开始批量识别';
         });
     });
 
@@ -385,7 +595,8 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
         function val(k) { return f[k] ? escapeHtml(f[k]) : '-'; }
         var imgUrl = escapeHtml(d.image_url || '');
 
-        var rowHtml = '<tr data-id="' + d.record_id + '">' +
+        var rowHtml = '<tr data-id="' + d.record_id + '" data-machine-name="' + escapeHtml(f.machine_name || '') + '" data-upload-time="' + escapeHtml(d.upload_time || '') + '">' +
+            '<td><button type="button" class="review-btn ' + (d.reviewed ? 'reviewed' : '') + '" data-id="' + d.record_id + '" data-reviewed="' + (d.reviewed ? '1' : '0') + '">' + (d.reviewed ? '已审核' : '未审核') + '</button></td>' +
             '<td class="editable" data-field="machine_name"><b>' + val('machine_name') + '</b></td>' +
             '<td class="editable" data-field="sn_number"><code>' + val('sn_number') + '</code></td>' +
             '<td class="editable" data-field="nic1_name">' + val('nic1_name') + '</td>' +
@@ -394,10 +605,15 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
             '<td class="editable" data-field="nic2_mac"><code>' + val('nic2_mac') + '</code></td>' +
             '<td class="editable" data-field="disk_gb">' + val('disk_gb') + '</td>' +
             '<td class="editable" data-field="memory_gb">' + val('memory_gb') + '</td>' +
+            '<td class="editable" data-field="department">' + val('department') + '</td>' +
+            '<td class="editable" data-field="person_name">' + val('person_name') + '</td>' +
+            '<td class="editable" data-field="employee_id">' + val('employee_id') + '</td>' +
             '<td>' + escapeHtml(d.upload_time || '') + '</td>' +
-            '<td><a href="' + imgUrl + '" target="_blank"><img src="' + imgUrl + '"></a></td>' +
+            '<td><button type="button" class="review-btn ' + (d.reviewed ? 'reviewed' : '') + '" data-id="' + d.record_id + '" data-reviewed="' + (d.reviewed ? '1' : '0') + '">' + (d.reviewed ? '已审核' : '未审核') + '</button></td>' +
+            '<td><a href="' + imgUrl + '" target="_blank"><img class="record-image" src="' + imgUrl + '" alt="' + escapeHtml(d.image_name || '上传图片') + '"></a></td>' +
             '<td><button class="edit-btn" data-id="' + d.record_id + '">✏️ 编辑</button>' +
             '<button class="delete-btn" data-id="' + d.record_id + '">🗑️ 删除</button></td>' +
+            '<button class="reprocess-btn edit-btn" data-id="' + d.record_id + '">重新识别</button>' +
             '</tr>';
 
         var table = document.getElementById('records-table');
@@ -407,9 +623,9 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
             table = document.createElement('table');
             table.id = 'records-table';
             table.innerHTML =
-                '<thead><tr>' +
+                '<thead><tr><th>审核状态</th>' +
                 '<th>机器名</th><th>SN号</th><th>网卡1</th><th>网卡1 MAC</th>' +
-                '<th>网卡2</th><th>网卡2 MAC</th><th>硬盘(GB)</th><th>内存(GB)</th>' +
+                '<th>网卡2</th><th>网卡2 MAC</th><th>硬盘(GB)</th><th>内存(GB)</th><th>部门</th><th>姓名</th><th>工号</th>' +
                 '<th>上传时间</th><th>原图</th>' +
                 '<th>操作</th>' +
                 '</tr></thead><tbody>' + rowHtml + '</tbody>';
@@ -429,6 +645,8 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
             newRow.style.background = '#e8f4ff';
             setTimeout(function () { newRow.style.background = ''; }, 2000);
         }
+        normalizeDynamicRow(table.querySelector('tbody').firstElementChild);
+        applyRecordFilters();
 
         // 更新记录条数
         var h3 = document.querySelector('.toolbar h3');
@@ -437,6 +655,110 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
             var count = m ? Math.min(200, parseInt(m[1], 10) + 1) : 1;
             h3.textContent = '📊 历史记录（' + count + ' 条）';
         }
+    }
+        var sortMachineBtn = document.getElementById('sort-machine-btn');
+    if (sortMachineBtn) {
+        var machineSortAscending = true;
+        sortMachineBtn.addEventListener('click', function () {
+            var table = document.getElementById('records-table');
+            if (!table) return;
+            var tbody = table.querySelector('tbody');
+            var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
+            rows.sort(function (a, b) {
+                var av = a.getAttribute('data-machine-name') || '';
+                var bv = b.getAttribute('data-machine-name') || '';
+                if (!av.trim() && bv.trim()) return 1;
+                if (av.trim() && !bv.trim()) return -1;
+                var result = compareMachineNames(av, bv);
+                return machineSortAscending ? result : -result;
+            });
+            rows.forEach(function (row) { tbody.appendChild(row); });
+            machineSortAscending = !machineSortAscending;
+            sortMachineBtn.textContent = '机器名：' + (machineSortAscending ? '升序' : '降序');
+        });
+    }
+    function compareMachineNames(a, b) {
+        a = String(a || '').trim().toUpperCase();
+        b = String(b || '').trim().toUpperCase();
+        if (!a && !b) return 0;
+        if (!a) return 1;
+        if (!b) return -1;
+        var ap = a.split(/(\d+)/), bp = b.split(/(\d+)/);
+        var length = Math.max(ap.length, bp.length);
+        for (var i = 0; i < length; i++) {
+            var ax = ap[i] == null ? '' : ap[i], bx = bp[i] == null ? '' : bp[i];
+            if (ax === bx) continue;
+            if (/^\d+$/.test(ax) && /^\d+$/.test(bx)) return Number(ax) - Number(bx);
+            return ax < bx ? -1 : 1;
+        }
+        return 0;
+    }
+    function normalizeDynamicRow(row) {
+        if (!row) return;
+        var touchedCells = [];
+        var reviewButtons = Array.prototype.slice.call(row.querySelectorAll('.review-btn'));
+        reviewButtons.slice(1).forEach(function (button) {
+            if (button.parentElement) {
+                touchedCells.push(button.parentElement);
+                button.parentElement.remove();
+            }
+        });
+        var actionButtons = Array.prototype.slice.call(row.querySelectorAll('.reprocess-btn, .edit-btn, .delete-btn'));
+        var actionCell = document.createElement('td');
+        actionButtons.forEach(function (button) {
+            var parent = button.parentElement;
+            if (parent && parent.tagName === 'TD') {
+                touchedCells.push(parent);
+                parent.removeChild(button);
+            } else if (parent === row) {
+                row.removeChild(button);
+            }
+            actionCell.appendChild(button);
+        });
+        touchedCells.forEach(function (cell) {
+            if (cell && cell.parentElement === row && !cell.children.length && !cell.textContent.trim()) cell.remove();
+        });
+        row.appendChild(actionCell);
+    }
+    Array.prototype.forEach.call(document.querySelectorAll('#records-table tbody tr'), normalizeDynamicRow);
+    var machineSearch = document.getElementById('machine-search');
+    var reviewFilter = document.getElementById('review-filter');
+    function applyRecordFilters() {
+        var query = machineSearch ? machineSearch.value.trim().toUpperCase() : '';
+        var reviewMode = reviewFilter ? reviewFilter.value : 'all';
+        var table = document.getElementById('records-table');
+        if (!table) return;
+        Array.prototype.forEach.call(table.querySelectorAll('tbody tr'), function (row) {
+            var machineName = (row.getAttribute('data-machine-name') || '').trim().toUpperCase();
+            var reviewed = row.querySelector('.review-btn') && row.querySelector('.review-btn').getAttribute('data-reviewed') === '1';
+            var matchesMachine = !query || machineName.indexOf(query) !== -1;
+            var matchesReview = reviewMode === 'all' || (reviewMode === 'reviewed' ? reviewed : !reviewed);
+            row.style.display = matchesMachine && matchesReview ? '' : 'none';
+        });
+    }
+    if (machineSearch) {
+        machineSearch.addEventListener('input', applyRecordFilters);
+    }
+    if (reviewFilter) {
+        reviewFilter.addEventListener('change', applyRecordFilters);
+    }
+    var sortUploadBtn = document.getElementById('sort-upload-btn');
+    if (sortUploadBtn) {
+        var uploadSortDescending = true;
+        sortUploadBtn.addEventListener('click', function () {
+            var table = document.getElementById('records-table');
+            if (!table) return;
+            var tbody = table.querySelector('tbody');
+            var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
+            rows.sort(function (a, b) {
+                var at = Date.parse((a.getAttribute('data-upload-time') || '').trim().replace(' ', 'T')) || 0;
+                var bt = Date.parse((b.getAttribute('data-upload-time') || '').trim().replace(' ', 'T')) || 0;
+                return uploadSortDescending ? bt - at : at - bt;
+            });
+            rows.forEach(function (row) { tbody.appendChild(row); });
+            uploadSortDescending = !uploadSortDescending;
+            sortUploadBtn.textContent = '上传时间：' + (uploadSortDescending ? '降序' : '升序');
+        });
     }
 })();
 </script>
@@ -482,6 +804,9 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
                     <label>内存(GB)</label>
                     <input id="f-memory_gb">
                 </div>
+                <div><label>部门</label><input id="f-department"></div>
+                <div><label>姓名</label><input id="f-person_name"></div>
+                <div><label>工号</label><input id="f-employee_id"></div>
             </div>
             <div class="save-msg" id="edit-msg"></div>
         </div>
@@ -492,16 +817,56 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
     </div>
 </div>
 
+<div class="image-preview-mask" id="image-preview-mask" role="dialog" aria-modal="true" aria-label="图片预览">
+    <button type="button" class="image-preview-close" id="image-preview-close" aria-label="关闭图片预览">&times;</button>
+    <img id="image-preview" alt="图片预览">
+</div>
+
 <script>
 (function () {
     var mask = document.getElementById('edit-mask');
+    var imagePreviewMask = document.getElementById('image-preview-mask');
+    var imagePreview = document.getElementById('image-preview');
     var editId = document.getElementById('edit-id');
     var msg = document.getElementById('edit-msg');
     var fieldKeys = ['machine_name', 'sn_number', 'nic1_name', 'nic1_mac',
-                     'nic2_name', 'nic2_mac', 'disk_gb', 'memory_gb'];
+                     'nic2_name', 'nic2_mac', 'disk_gb', 'memory_gb',
+                     'department', 'person_name', 'employee_id'];
 
     // 打开编辑弹窗（事件委托：动态插入的新行也能响应）
     document.addEventListener('click', function (e) {
+        var reviewBtn = e.target.closest ? e.target.closest('.review-btn') : null;
+        if (reviewBtn) {
+            var id = reviewBtn.getAttribute('data-id');
+            var next = reviewBtn.getAttribute('data-reviewed') !== '1';
+            reviewBtn.disabled = true;
+            fetch('/api/record/' + encodeURIComponent(id), {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reviewed: next })
+            }).then(function (resp) { return resp.json().then(function (data) { return { ok: resp.ok, data: data }; }); })
+              .then(function (result) {
+                  if (!result.ok || !result.data.success) throw new Error(result.data.error || '保存审核状态失败');
+                  reviewBtn.setAttribute('data-reviewed', next ? '1' : '0');
+                  reviewBtn.textContent = next ? '已审核' : '未审核';
+                  reviewBtn.classList.toggle('reviewed', next);
+                  applyRecordFilters();
+              }).catch(function (err) { window.alert(err.message || String(err)); })
+              .finally(function () { reviewBtn.disabled = false; });
+            return;
+        }
+        var reprocessBtn = e.target.closest ? e.target.closest('.reprocess-btn') : null;
+        if (reprocessBtn) {
+            reprocessRecord(reprocessBtn.getAttribute('data-id'), reprocessBtn);
+            return;
+        }
+        var image = e.target.closest ? e.target.closest('.record-image') : null;
+        if (image) {
+            e.preventDefault();
+            imagePreview.src = image.currentSrc || image.src;
+            imagePreview.alt = image.alt || '图片预览';
+            imagePreviewMask.classList.add('show');
+            return;
+        }
         var deleteBtn = e.target.closest ? e.target.closest('.delete-btn') : null;
         if (deleteBtn) {
             deleteRecord(deleteBtn.getAttribute('data-id'));
@@ -565,6 +930,57 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
         if (e.target === mask) closeModal();
     });
 
+    function closeImagePreview() {
+        imagePreviewMask.classList.remove('show');
+        imagePreview.removeAttribute('src');
+    }
+
+    function reprocessRecord(id, button) {
+        if (!window.confirm('确定重新识别并覆盖这条记录吗？')) return;
+        var originalText = button.textContent;
+        button.disabled = true;
+        button.textContent = '识别中...';
+        fetch('/api/record/' + encodeURIComponent(id) + '/reprocess', { method: 'POST', headers: { 'Accept': 'application/json' } })
+            .then(function (resp) {
+                return resp.json().then(function (data) { return { ok: resp.ok, data: data }; });
+            })
+            .then(function (result) {
+                if (!result.ok || !result.data.success) throw new Error(result.data.error || '重新识别失败');
+                var row = document.querySelector('tr[data-id="' + id + '"]');
+                var fields = result.data.fields || {};
+                if (row) {
+                    if (fields.machine_name != null) row.setAttribute('data-machine-name', fields.machine_name || '');
+                    Object.keys(fields).forEach(function (key) {
+                        var cell = row.querySelector('td[data-field="' + key + '"]');
+                        if (cell) cell.textContent = fields[key] || '-';
+                    });
+                    var timeCell = row.querySelector('td:nth-last-child(4)');
+                    if (timeCell && result.data.upload_time) timeCell.textContent = result.data.upload_time;
+                    var image = row.querySelector('.record-image');
+                    if (image && result.data.image_url) {
+                        image.src = result.data.image_url + '?t=' + Date.now();
+                        var link = image.closest('a');
+                        if (link) link.href = result.data.image_url;
+                    }
+                    row.style.background = '#e8f4ff';
+                    setTimeout(function () { row.style.background = ''; }, 2000);
+                }
+                window.alert('已重新识别并覆盖原记录');
+            })
+            .catch(function (err) { window.alert(err.message || String(err)); })
+            .finally(function () { button.disabled = false; button.textContent = originalText; });
+    }
+    document.getElementById('image-preview-close').addEventListener('click', closeImagePreview);
+    imagePreviewMask.addEventListener('click', function (e) {
+        if (e.target === imagePreviewMask) closeImagePreview();
+    });
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') {
+            closeImagePreview();
+            closeModal();
+        }
+    });
+
     // 保存
     document.getElementById('edit-save').addEventListener('click', function () {
         var id = editId.textContent;
@@ -589,6 +1005,7 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
                     var cell = row.querySelector('td[data-field="' + k + '"]');
                     if (cell) cell.textContent = payload[k] || '-';
                 });
+                if (payload.machine_name != null) row.setAttribute('data-machine-name', payload.machine_name);
                 setTimeout(closeModal, 600);
             } else {
                 msg.innerHTML = '<span style="color:#c0392b;">❌ ' + escapeHtml(data.error || '保存失败') + '</span>';

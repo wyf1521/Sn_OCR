@@ -38,6 +38,17 @@ def init_db():
             upload_time     TEXT    NOT NULL
         )
     ''')
+    # Fields introduced after the first database version. SQLite keeps
+    # existing installations compatible through additive migrations.
+    existing = {row[1] for row in cur.execute('PRAGMA table_info(ocr_records)').fetchall()}
+    for name in ('brand', 'computer_model', 'cpu', 'system_type',
+                 'operating_system', 'version', 'department', 'person_name',
+                 'employee_id', 'install_time', 'reviewed'):
+        if name not in existing:
+            if name == 'reviewed':
+                cur.execute('ALTER TABLE ocr_records ADD COLUMN reviewed INTEGER NOT NULL DEFAULT 0')
+            else:
+                cur.execute(f'ALTER TABLE ocr_records ADD COLUMN {name} TEXT')
     # 解析后的结构化字段（来自所有图片，便于 Excel 输出汇总）
     cur.execute('''
         CREATE TABLE IF NOT EXISTS ocr_fields (
@@ -56,6 +67,13 @@ def save_record(username, image_name, image_path, parsed: dict, full_text: str):
     """保存一条 OCR 识别记录"""
     conn = get_conn()
     cur = conn.cursor()
+    sn_number = str(parsed.get('sn_number', '') or '').strip()
+    if sn_number:
+        cur.execute('SELECT id FROM ocr_records WHERE lower(trim(sn_number))=lower(?) LIMIT 1', (sn_number,))
+        duplicate = cur.fetchone()
+        if duplicate:
+            conn.close()
+            return None
     now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     extra = parsed.get('_extra', '')
 
@@ -63,8 +81,10 @@ def save_record(username, image_name, image_path, parsed: dict, full_text: str):
         INSERT INTO ocr_records
         (username, image_name, image_path, full_text,
          machine_name, nic1_name, nic1_mac, nic2_name, nic2_mac,
-         disk_gb, memory_gb, sn_number, extra_info, upload_time)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         disk_gb, memory_gb, sn_number, extra_info, upload_time,
+         brand, computer_model, cpu, system_type, operating_system, version,
+         department, person_name, employee_id, install_time)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ''', (
         username, image_name, image_path, full_text,
         parsed.get('machine_name', ''),
@@ -77,6 +97,10 @@ def save_record(username, image_name, image_path, parsed: dict, full_text: str):
         parsed.get('sn_number', ''),
         extra,
         now
+        ,parsed.get('brand', ''), parsed.get('computer_model', ''), parsed.get('cpu', ''),
+        parsed.get('system_type', ''), parsed.get('operating_system', ''), parsed.get('version', ''),
+        parsed.get('department', ''), parsed.get('person_name', ''), parsed.get('employee_id', ''),
+        parsed.get('install_time', '')
     ))
     record_id = cur.lastrowid
 
@@ -91,6 +115,60 @@ def save_record(username, image_name, image_path, parsed: dict, full_text: str):
     conn.commit()
     conn.close()
     return record_id
+
+
+def overwrite_record(record_id: int, username, image_name, image_path,
+                     parsed: dict, full_text: str) -> bool:
+    """Replace an existing OCR record and its structured field snapshot."""
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute('''
+        UPDATE ocr_records SET
+            username=?, image_name=?, image_path=?, full_text=?,
+            machine_name=?, nic1_name=?, nic1_mac=?, nic2_name=?, nic2_mac=?,
+            disk_gb=?, memory_gb=?, sn_number=?, extra_info=?, upload_time=?,
+            brand=?, computer_model=?, cpu=?, system_type=?, operating_system=?, version=?,
+            department=?, person_name=?, employee_id=?, install_time=?
+            , reviewed=0
+        WHERE id=?
+    ''', (
+        username, image_name, image_path, full_text,
+        parsed.get('machine_name', ''), parsed.get('nic1_name', ''), parsed.get('nic1_mac', ''),
+        parsed.get('nic2_name', ''), parsed.get('nic2_mac', ''), parsed.get('disk_gb', ''),
+        parsed.get('memory_gb', ''), parsed.get('sn_number', ''), parsed.get('_extra', ''), now,
+        parsed.get('brand', ''), parsed.get('computer_model', ''), parsed.get('cpu', ''),
+        parsed.get('system_type', ''), parsed.get('operating_system', ''), parsed.get('version', ''),
+        parsed.get('department', ''), parsed.get('person_name', ''), parsed.get('employee_id', ''),
+        parsed.get('install_time', ''), record_id
+    ))
+    changed = cur.rowcount > 0
+    if changed:
+        cur.execute('DELETE FROM ocr_fields WHERE record_id=?', (record_id,))
+        field_rows = [(record_id, k, v) for k, v in parsed.items() if not k.startswith('_')]
+        if field_rows:
+            cur.executemany(
+                'INSERT INTO ocr_fields (record_id, field_name, field_value) VALUES (?,?,?)',
+                field_rows
+            )
+        conn.commit()
+    else:
+        conn.rollback()
+    conn.close()
+    return changed
+
+
+def find_record_by_sn(sn_number: str):
+    sn_number = str(sn_number or '').strip()
+    if not sn_number:
+        return None
+    conn = get_conn()
+    row = conn.execute(
+        'SELECT * FROM ocr_records WHERE lower(trim(sn_number))=lower(?) LIMIT 1',
+        (sn_number,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
 
 
 def list_records(username=None, limit=500):
@@ -122,6 +200,7 @@ def get_record(record_id):
 EDITABLE_FIELDS = [
     'machine_name', 'nic1_name', 'nic1_mac',
     'nic2_name', 'nic2_mac', 'disk_gb', 'memory_gb', 'sn_number',
+    'department', 'person_name', 'employee_id', 'reviewed',
 ]
 
 
@@ -129,6 +208,12 @@ def update_record(record_id: int, updates: dict) -> bool:
     """手动更新一条记录的可编辑字段（用于人工核对修正）"""
     # 只允许更新白名单字段
     allowed = {k: v for k, v in updates.items() if k in EDITABLE_FIELDS}
+    if 'reviewed' in allowed:
+        value = allowed['reviewed']
+        if isinstance(value, str):
+            allowed['reviewed'] = 1 if value.strip().lower() in {'1', 'true', 'yes', 'on', '已审核'} else 0
+        else:
+            allowed['reviewed'] = 1 if value else 0
     if not allowed:
         return False
 

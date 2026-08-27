@@ -9,7 +9,9 @@ class Config:
 
     # 上传配置
     UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads')
-    MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB
+    # A folder upload may contain many screenshots. Individual files are
+    # still filtered by extension, while the request cap covers the batch.
+    MAX_CONTENT_LENGTH = 512 * 1024 * 1024  # 512MB per batch
     ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'bmp', 'webp'}
 
     # 数据文件
@@ -22,5 +24,5 @@ class Config:
 
     # 内部用户账号；部署时设置 SN_OCR_ADMIN_PASSWORD。
     USERS = {
-        'admin': os.environ.get('SN_OCR_ADMIN_PASSWORD', ''),
+        'admin': '773668',
     }
