@@ -1,0 +1,13 @@
+{
+  "provider": "siliconflow",
+  "siliconflow": {
+    "api_base": "https://api.siliconflow.cn/v1",
+    "api_key": "",
+    "model": "deepseek-ai/DeepSeek-OCR",
+    "prompt": "OCR:",
+    "timeout": 120,
+    "max_tokens": 4096,
+    "temperature": 0.0,
+    "top_p": 0.7
+  }
+}
