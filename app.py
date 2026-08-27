@@ -137,7 +137,7 @@ def _process_uploaded_file(file, duplicate_policy='skip', overwrite_record_id=No
                 'full_text': full_text, 'raw_response': raw_response,
                 'image_url': url_for('uploaded_file', filename=new_name),
                 'image_name': original_name,
-                'upload_time': time.strftime('%Y-%m-%d %H:%M:%S'),
+                'upload_time': database.current_time_text(),
                 'message': '已重新识别并覆盖原记录',
             }
 
@@ -163,7 +163,7 @@ def _process_uploaded_file(file, duplicate_policy='skip', overwrite_record_id=No
                     'field_count': len(fields), 'fields': fields,
                     'image_url': url_for('uploaded_file', filename=new_name),
                     'image_name': original_name,
-                    'upload_time': time.strftime('%Y-%m-%d %H:%M:%S'),
+                    'upload_time': database.current_time_text(),
                     'message': f"SN {parsed.get('sn_number', '')} 已覆盖原记录",
                 }
             _remove_image_artifacts(save_path)
@@ -185,7 +185,7 @@ def _process_uploaded_file(file, duplicate_policy='skip', overwrite_record_id=No
             'full_text': full_text, 'raw_response': raw_response,
             'image_url': url_for('uploaded_file', filename=new_name),
             'image_name': original_name,
-            'upload_time': time.strftime('%Y-%m-%d %H:%M:%S'),
+            'upload_time': database.current_time_text(),
         }
     except Exception:
         _remove_image_artifacts(save_path)

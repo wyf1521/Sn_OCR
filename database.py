@@ -2,7 +2,13 @@
 import sqlite3
 import os
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from config import Config
+
+
+def current_time_text() -> str:
+    """Return a stable China Standard Time timestamp for stored records."""
+    return datetime.now(ZoneInfo('Asia/Shanghai')).strftime('%Y-%m-%d %H:%M:%S')
 
 
 def get_conn():
@@ -99,7 +105,7 @@ def save_record(username, image_name, image_path, parsed: dict, full_text: str):
         if duplicate:
             conn.close()
             return None
-    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    now = current_time_text()
     extra = parsed.get('_extra', '')
 
     cur.execute('''
@@ -145,7 +151,7 @@ def save_record(username, image_name, image_path, parsed: dict, full_text: str):
 def overwrite_record(record_id: int, username, image_name, image_path,
                      parsed: dict, full_text: str) -> bool:
     """Replace an existing OCR record and its structured field snapshot."""
-    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    now = current_time_text()
     conn = get_conn()
     cur = conn.cursor()
     cur.execute('''
