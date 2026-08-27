@@ -3,6 +3,7 @@ import os
 import time
 import uuid
 import logging
+import hmac
 from functools import wraps
 from flask import (
     Flask, render_template, request, redirect, url_for, session,
@@ -71,7 +72,7 @@ def _remove_image_artifacts(image_path: str):
 
 
 def _process_uploaded_file(file, duplicate_policy='skip', overwrite_record_id=None,
-                           previous_image_path=None):
+                           previous_image_path=None, username=None):
     """Save one uploaded image, run OCR, and persist its structured fields."""
     original_name = _validate_upload(file)
 
@@ -120,7 +121,7 @@ def _process_uploaded_file(file, duplicate_policy='skip', overwrite_record_id=No
             parsed['_raw'] = str(raw_response)[:2000]
         if overwrite_record_id is not None:
             if not database.overwrite_record(
-                    overwrite_record_id, session['user'], original_name,
+                    overwrite_record_id, username or session.get('user', 'api'), original_name,
                     save_path, parsed, full_text):
                 raise ValueError('原记录不存在，无法覆盖')
             old_path = previous_image_path
@@ -141,14 +142,14 @@ def _process_uploaded_file(file, duplicate_policy='skip', overwrite_record_id=No
             }
 
         record_id = database.save_record(
-            username=session['user'], image_name=original_name,
+            username=username or session.get('user', 'api'), image_name=original_name,
             image_path=save_path, parsed=parsed, full_text=full_text
         )
         if record_id is None:
             duplicate = database.find_record_by_sn(parsed.get('sn_number', ''))
             if duplicate_policy == 'overwrite' and duplicate:
                 if not database.overwrite_record(
-                        duplicate['id'], session['user'], original_name,
+                        duplicate['id'], username or session.get('user', 'api'), original_name,
                         save_path, parsed, full_text):
                     raise RuntimeError('无法覆盖已有记录')
                 old_path = duplicate.get('image_path')
@@ -196,6 +197,26 @@ def login_required(f):
     def wrapper(*args, **kwargs):
         if 'user' not in session:
             return redirect(url_for('login'))
+        return f(*args, **kwargs)
+    return wrapper
+
+
+def external_api_required(f):
+    """Authenticate machine callers with a configured Bearer token."""
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        configured = Config.EXTERNAL_API_TOKEN
+        if not configured:
+            return jsonify({
+                'success': False,
+                'error': '外部 API 未配置，请设置 SN_OCR_API_TOKEN',
+            }), 503
+        authorization = request.headers.get('Authorization', '')
+        scheme, _, token = authorization.partition(' ')
+        if scheme.lower() != 'bearer' or not token or not hmac.compare_digest(token, configured):
+            return jsonify({'success': False, 'error': 'API Token 无效或缺失'}), 401, {
+                'WWW-Authenticate': 'Bearer'
+            }
         return f(*args, **kwargs)
     return wrapper
 
@@ -253,7 +274,7 @@ def upload_batch():
     duplicate_policy = request.form.get('duplicate_policy', 'skip').strip().lower()
     if duplicate_policy not in {'skip', 'overwrite'}:
         duplicate_policy = 'skip'
-    files = request.files.getlist('file') or request.files.getlist('files')
+    files = request.files.getlist('file') + request.files.getlist('files')
     # Accept browser/framework variants such as files[] and unnamed parts.
     if not files:
         for key in request.files.keys():
@@ -299,6 +320,60 @@ def upload_batch():
     flash(f'批量识别完成：成功 {len(succeeded)} 张，失败 {len(failed)} 张',
           'success' if succeeded else 'danger')
     return redirect(url_for('index'))
+
+
+@app.route('/api/v1/ocr', methods=['POST'])
+@app.route('/api/v1/upload', methods=['POST'])
+@external_api_required
+def external_ocr():
+    """External OCR interface; unlike the browser route it uses Bearer auth."""
+    duplicate_policy = request.form.get('duplicate_policy', 'skip').strip().lower()
+    if duplicate_policy not in {'skip', 'overwrite'}:
+        duplicate_policy = 'skip'
+    files = request.files.getlist('file') + request.files.getlist('files')
+    if not files:
+        for key in request.files.keys():
+            if key.endswith('[]') or key.startswith('file'):
+                files.extend(request.files.getlist(key))
+    files = [file for file in files if file and file.filename]
+    if not files:
+        return jsonify({
+            'success': False,
+            'error': '没有收到上传文件，请使用 multipart/form-data 字段 file',
+        }), 400
+    if len(files) > Config.MAX_BATCH_FILES:
+        return jsonify({
+            'success': False,
+            'error': f'一次最多上传 {Config.MAX_BATCH_FILES} 张图片',
+        }), 413
+
+    results = []
+    for uploaded in files:
+        try:
+            results.append(_process_uploaded_file(
+                uploaded, duplicate_policy=duplicate_policy, username='api'
+            ))
+        except ValueError as exc:
+            results.append({
+                'success': False, 'image_name': uploaded.filename, 'error': str(exc)
+            })
+        except Exception as exc:
+            logger.exception('External OCR failed image=%s', uploaded.filename)
+            results.append({
+                'success': False, 'image_name': uploaded.filename,
+                'error': 'OCR 处理失败，请查看服务日志',
+            })
+
+    succeeded = [result for result in results if result.get('success')]
+    if len(results) == 1:
+        return jsonify(results[0]), 200 if succeeded else 500
+    return jsonify({
+        'success': bool(succeeded),
+        'total': len(results),
+        'succeeded': len(succeeded),
+        'failed': len(results) - len(succeeded),
+        'results': results,
+    }), 200 if succeeded else 500
 
 
 @app.route('/uploads/<path:filename>')
