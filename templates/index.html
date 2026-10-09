@@ -25,7 +25,7 @@ header .user { font-size: 14px; }
 header a { color: #fff; text-decoration: none; margin-left: 16px; }
 header a:hover { text-decoration: underline; }
 
-.container { max-width: 1200px; margin: 24px auto; padding: 0 16px; }
+.container { max-width: none; margin: 20px; padding: 0; }
 
 .upload-card {
     background: #fff;
@@ -35,7 +35,9 @@ header a:hover { text-decoration: underline; }
     margin-bottom: 24px;
 }
 .upload-card h3 { margin: 0 0 16px 0; }
-.upload-card form { display: flex; gap: 12px; align-items: center; }
+.upload-card form { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(220px, 1fr) 180px auto; gap: 12px; align-items: end; }
+.upload-card form > label { display: grid; gap: 6px; color: #555; font-size: 13px; }
+.upload-card form select { width: 100%; padding: 10px; border: 1px solid #ccd2e5; border-radius: 6px; background: #fff; font-size: 14px; }
 .upload-card input[type=file] {
     flex: 1;
     border: 1px dashed #ccc;
@@ -75,7 +77,8 @@ header a:hover { text-decoration: underline; }
     margin: 8px 0 0 0;
 }
 
-.toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
+.toolbar h3 { margin-right: auto !important; }
 .toolbar a.btn {
     background: #28a745;
     color: #fff;
@@ -95,23 +98,45 @@ header a:hover { text-decoration: underline; }
 .flash-bar.warning { background: #fff3cd; color: #856404; }
 
 table {
-    width: 100%;
+    width: max-content;
+    table-layout: fixed;
     background: #fff;
     border-radius: 10px;
-    overflow: hidden;
-    border-collapse: collapse;
+    border-collapse: separate;
+    border-spacing: 0;
     box-shadow: 0 2px 12px rgba(0,0,0,0.06);
 }
 th {
     background: #667eea;
     color: #fff;
-    padding: 12px 8px;
+    padding: 12px 10px;
     text-align: left;
     font-size: 13px;
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
-td { padding: 10px 8px; border-bottom: 1px solid #eee; font-size: 13px; vertical-align: top; }
+td { max-width: 0; padding: 8px 10px; border-bottom: 1px solid #eee; font-size: 13px; vertical-align: middle; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+td > * { max-width: 100%; }
+td code { font-family: Consolas, "Courier New", monospace; }
 tr:hover { background: #f9f9ff; }
-td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointer; border: 1px solid #ddd; }
+td img { width: 72px; height: 48px; object-fit: cover; border-radius: 4px; cursor: pointer; border: 1px solid #ddd; }
+.col-resizer { position: absolute; top: 0; right: 0; width: 8px; height: 100%; cursor: col-resize; z-index: 5; }
+.col-resizer:hover, .col-resizer.dragging { background: rgba(255,255,255,.45); }
+.records-scroll { overflow-x: auto; overflow-y: visible; border-radius: 10px; background: #fff; box-shadow: 0 2px 12px rgba(0,0,0,0.06); scrollbar-width: none; }
+.records-scroll::-webkit-scrollbar { height: 0; }
+.records-scroll.pin-x { position: sticky; bottom: 0; z-index: 20; height: 16px; overflow-x: auto; overflow-y: hidden; border-radius: 0; background: #f4f6fa; box-shadow: 0 -2px 8px rgba(0,0,0,.12); scrollbar-width: thin; }
+.records-scroll.pin-x::-webkit-scrollbar { height: 12px; }
+@media (max-width: 900px) {
+    .container { margin: 12px; }
+    .upload-card form { grid-template-columns: 1fr; }
+}
+th.sticky-col, td.sticky-col { position: sticky; right: 0; z-index: 3; background: inherit; }
+th.sticky-col { background: #667eea; z-index: 4; }
+td.sticky-col { background: #fff; }
+tr:hover td.sticky-col { background: #f9f9ff; }
 .record-image:hover { opacity: 0.82; }
 .image-preview-mask {
     display: none;
@@ -123,7 +148,7 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
     align-items: center;
     justify-content: center;
 }
-th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+th.sortable { cursor: pointer; user-select: none; white-space: nowrap; position: sticky; }
 th.sortable:hover { background: #5568d3; }
 th.sortable::after { content: ' ↕'; opacity: .65; font-size: 11px; }
 th.sortable[aria-sort="ascending"]::after { content: ' ↑'; opacity: 1; }
@@ -307,6 +332,7 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
     </div>
 
     {% if records %}
+    <div class="records-scroll">
     <table id="records-table">
         <thead>
             <tr>
@@ -323,7 +349,7 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
                 <th class="sortable" data-sort-key="upload_time">上传时间</th>
                 <th class="sortable" data-sort-key="migrate_domain">是否迁域</th>
                 <th>原图</th>
-                <th>操作</th>
+                <th class="sticky-col">操作</th>
             </tr>
         </thead>
         <tbody>
@@ -348,7 +374,7 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
                         <img class="record-image" src="{{ url_for('uploaded_file', filename=r.image_path.split('/')[-1].split('\\')[-1]) }}" alt="{{ r.image_name or '上传图片' }}">
                     </a>
                 </td>
-                <td>
+                <td class="sticky-col">
                     <button class="reprocess-btn edit-btn" data-id="{{ r.id }}">重新识别</button>
                     <button class="edit-btn" data-id="{{ r.id }}">✏️ 编辑</button>
                     <button class="delete-btn" data-id="{{ r.id }}">🗑️ 删除</button>
@@ -357,6 +383,7 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
         {% endfor %}
         </tbody>
     </table>
+    </div>
     {% else %}
         <div class="empty">还没有记录，赶快上传第一张图片吧 🚀</div>
     {% endif %}
@@ -618,10 +645,13 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
                 '<th class="sortable" data-sort-key="machine_name">机器名</th><th class="sortable" data-sort-key="sn_number">SN号</th><th class="sortable" data-sort-key="nic1_name">网卡1</th><th class="sortable" data-sort-key="nic1_mac">网卡1 MAC</th>' +
                 '<th class="sortable" data-sort-key="nic2_name">网卡2</th><th class="sortable" data-sort-key="nic2_mac">网卡2 MAC</th><th class="sortable" data-sort-key="disk_gb">硬盘(GB)</th><th class="sortable" data-sort-key="memory_gb">内存(GB)</th><th class="sortable" data-sort-key="department">部门</th><th class="sortable" data-sort-key="person_name">姓名</th><th class="sortable" data-sort-key="employee_id">工号</th>' +
                 '<th class="sortable" data-sort-key="upload_time">上传时间</th><th class="sortable" data-sort-key="migrate_domain">是否迁域</th><th>原图</th>' +
-                '<th>操作</th>' +
+                '<th class="sticky-col">操作</th>' +
                 '</tr></thead><tbody>' + rowHtml + '</tbody>';
             if (emptyDiv) {
-                emptyDiv.parentNode.replaceChild(table, emptyDiv);
+                var scroll = document.createElement('div');
+                scroll.className = 'records-scroll';
+                scroll.appendChild(table);
+                emptyDiv.parentNode.replaceChild(scroll, emptyDiv);
             }
         } else {
             // 已有表格：新记录插入到最顶部（列表按时间倒序）
@@ -675,6 +705,7 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
         });
         var actionButtons = Array.prototype.slice.call(row.querySelectorAll('.reprocess-btn, .edit-btn, .delete-btn'));
         var actionCell = document.createElement('td');
+        actionCell.className = 'sticky-col';
         actionButtons.forEach(function (button) {
             var parent = button.parentElement;
             if (parent && parent.tagName === 'TD') {
@@ -724,14 +755,17 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
         sortState.key = key;
         var tbody = table.querySelector('tbody');
         var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
-        rows.sort(function (a, b) {
-            var av = getSortValue(a, key), bv = getSortValue(b, key), result;
+        var decorated = rows.map(function (row) { return { row: row, value: getSortValue(row, key) }; });
+        decorated.sort(function (a, b) {
+            var av = a.value, bv = b.value, result;
             if (key === 'machine_name') result = compareMachineNames(av, bv);
             else if (key === 'upload_time') result = (Date.parse(String(av).replace(' ', 'T')) || 0) - (Date.parse(String(bv).replace(' ', 'T')) || 0);
             else result = String(av).localeCompare(String(bv), 'zh-CN', { numeric: true, sensitivity: 'base' });
             return sortState.direction === 'ascending' ? result : -result;
         });
-        rows.forEach(function (row) { tbody.appendChild(row); });
+        var fragment = document.createDocumentFragment();
+        decorated.forEach(function (item) { fragment.appendChild(item.row); });
+        tbody.appendChild(fragment);
         Array.prototype.forEach.call(table.querySelectorAll('th.sortable'), function (header) {
             header.setAttribute('aria-sort', header.getAttribute('data-sort-key') === key ? sortState.direction : 'none');
         });
@@ -744,8 +778,74 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
     }
     document.addEventListener('click', function (event) {
         var header = event.target.closest ? event.target.closest('th.sortable') : null;
+        if (event.target.classList && event.target.classList.contains('col-resizer')) return;
         if (header) sortTable(header.getAttribute('data-sort-key'));
     });
+    var DEFAULT_COLUMN_WIDTHS = [78, 118, 126, 150, 136, 150, 136, 78, 78, 90, 78, 82, 138, 78, 84, 78];
+    function enableColumnResize(table) {
+        if (!table) return;
+        var headers = Array.prototype.slice.call(table.querySelectorAll('thead th'));
+        headers.forEach(function (header, index) {
+            if (!header.style.width) header.style.width = (DEFAULT_COLUMN_WIDTHS[index] || 100) + 'px';
+            if (header.querySelector('.col-resizer')) return;
+            var handle = document.createElement('span');
+            handle.className = 'col-resizer';
+            handle.addEventListener('mousedown', function (event) {
+                event.preventDefault();
+                event.stopPropagation();
+                var startX = event.clientX;
+                var startWidth = header.getBoundingClientRect().width;
+                handle.classList.add('dragging');
+                var frame = 0;
+                function move(moveEvent) {
+                    var nextWidth = Math.max(56, startWidth + moveEvent.clientX - startX) + 'px';
+                    if (frame) cancelAnimationFrame(frame);
+                    frame = requestAnimationFrame(function () { header.style.width = nextWidth; });
+                }
+                function stop() {
+                    handle.classList.remove('dragging');
+                    document.removeEventListener('mousemove', move);
+                    document.removeEventListener('mouseup', stop);
+                }
+                document.addEventListener('mousemove', move);
+                document.addEventListener('mouseup', stop);
+            });
+            header.appendChild(handle);
+        });
+    }
+    enableColumnResize(document.getElementById('records-table'));
+    function pinHorizontalScroll() {
+        var scroll = document.querySelector('.records-scroll:not(.pin-x)');
+        if (!scroll) return;
+        var pin = document.querySelector('.records-scroll.pin-x');
+        if (!pin) {
+            pin = document.createElement('div');
+            pin.className = 'records-scroll pin-x';
+            pin.appendChild(document.createElement('div'));
+            pin.setAttribute('aria-hidden', 'true');
+            scroll.parentNode.insertBefore(pin, scroll.nextSibling);
+            var syncing = false;
+            function sync(source, target) {
+                if (syncing) return;
+                syncing = true;
+                target.scrollLeft = source.scrollLeft;
+                syncing = false;
+            }
+            scroll.addEventListener('scroll', function () { sync(scroll, pin); });
+            pin.addEventListener('scroll', function () { sync(pin, scroll); });
+        }
+        var table = scroll.querySelector('table');
+        var spacer = pin.firstElementChild;
+        if (table && spacer) spacer.style.width = table.scrollWidth + 'px';
+    }
+    pinHorizontalScroll();
+    window.addEventListener('resize', pinHorizontalScroll);
+    var originalInsertRecordRow = insertRecordRow;
+    insertRecordRow = function (data) {
+        originalInsertRecordRow(data);
+        enableColumnResize(document.getElementById('records-table'));
+        pinHorizontalScroll();
+    };
 })();
 </script>
 
@@ -923,7 +1023,8 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
                 }
                 var tbody = document.querySelector('#records-table tbody');
                 if (tbody && !tbody.children.length) {
-                    document.getElementById('records-table').outerHTML = '<div class="empty">还没有记录，赶快上传第一张图片吧 🚀</div>';
+                    var scroll = document.querySelector('.records-scroll');
+                    if (scroll) scroll.outerHTML = '<div class="empty">还没有记录，赶快上传第一张图片吧 🚀</div>';
                 }
             })
             .catch(function (err) {
