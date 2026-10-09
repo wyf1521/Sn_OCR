@@ -87,17 +87,6 @@ header a:hover { text-decoration: underline; }
 .toolbar a.btn.inventory { background: #00695c; }
 .toolbar a.btn.inventory:hover { background: #005047; }
 .toolbar a.btn:hover { background: #218838; }
-.toolbar button.sort-btn {
-    margin-right: 8px;
-    padding: 8px 14px;
-    border: 1px solid #667eea;
-    border-radius: 6px;
-    background: #fff;
-    color: #667eea;
-    cursor: pointer;
-    font-size: 14px;
-}
-.toolbar button.sort-btn:hover { background: #eef0ff; }
 .machine-search { width: 190px; padding: 8px 10px; border: 1px solid #ccd2e5; border-radius: 6px; font-size: 14px; }
 
 .flash-bar { padding: 12px; border-radius: 6px; margin-bottom: 16px; }
@@ -134,6 +123,11 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
     align-items: center;
     justify-content: center;
 }
+th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+th.sortable:hover { background: #5568d3; }
+th.sortable::after { content: ' ↕'; opacity: .65; font-size: 11px; }
+th.sortable[aria-sort="ascending"]::after { content: ' ↑'; opacity: 1; }
+th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
 .image-preview-mask.show { display: flex; }
 .image-preview-mask img {
     max-width: 96vw;
@@ -308,8 +302,6 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
             <option value="reviewed">已审核</option>
             <option value="unreviewed">未审核</option>
         </select>
-        <button type="button" class="sort-btn" id="sort-upload-btn">上传时间：降序</button>
-        <button type="button" class="sort-btn" id="sort-machine-btn">机器名：升序</button>
         <h3 style="margin:0;">📊 历史记录（{{ records|length }} 条）</h3>
         <a class="btn inventory" href="{{ url_for('export') }}">📋 填写并导出电脑信息表</a>
     </div>
@@ -318,17 +310,18 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
     <table id="records-table">
         <thead>
             <tr>
-                <th>审核状态</th>
-                <th>机器名</th>
-                <th>SN号</th>
-                <th>网卡1</th>
-                <th>网卡1 MAC</th>
-                <th>网卡2</th>
-                <th>网卡2 MAC</th>
-                <th>硬盘(GB)</th>
-                <th>内存(GB)</th>
-                <th>部门</th><th>姓名</th><th>工号</th>
-                <th>上传时间</th>
+                <th class="sortable" data-sort-key="reviewed">审核状态</th>
+                <th class="sortable" data-sort-key="machine_name">机器名</th>
+                <th class="sortable" data-sort-key="sn_number">SN号</th>
+                <th class="sortable" data-sort-key="nic1_name">网卡1</th>
+                <th class="sortable" data-sort-key="nic1_mac">网卡1 MAC</th>
+                <th class="sortable" data-sort-key="nic2_name">网卡2</th>
+                <th class="sortable" data-sort-key="nic2_mac">网卡2 MAC</th>
+                <th class="sortable" data-sort-key="disk_gb">硬盘(GB)</th>
+                <th class="sortable" data-sort-key="memory_gb">内存(GB)</th>
+                <th class="sortable" data-sort-key="department">部门</th><th class="sortable" data-sort-key="person_name">姓名</th><th class="sortable" data-sort-key="employee_id">工号</th>
+                <th class="sortable" data-sort-key="upload_time">上传时间</th>
+                <th class="sortable" data-sort-key="migrate_domain">是否迁域</th>
                 <th>原图</th>
                 <th>操作</th>
             </tr>
@@ -349,6 +342,7 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
                 <td class="editable" data-field="person_name">{{ r.person_name or '-' }}</td>
                 <td class="editable" data-field="employee_id">{{ r.employee_id or '-' }}</td>
                 <td>{{ r.upload_time }}</td>
+                <td class="editable" data-field="migrate_domain">{{ r.migrate_domain or '是' }}</td>
                 <td>
                     <a href="{{ url_for('uploaded_file', filename=r.image_path.split('/')[-1].split('\\')[-1]) }}" target="_blank">
                         <img class="record-image" src="{{ url_for('uploaded_file', filename=r.image_path.split('/')[-1].split('\\')[-1]) }}" alt="{{ r.image_name or '上传图片' }}">
@@ -585,7 +579,7 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
 
     // ---------- 历史记录表格自动刷新 ----------
     var FIELD_ORDER = ['machine_name', 'sn_number', 'nic1_name', 'nic1_mac',
-                       'nic2_name', 'nic2_mac', 'disk_gb', 'memory_gb'];
+                       'nic2_name', 'nic2_mac', 'disk_gb', 'memory_gb', 'migrate_domain'];
 
     function insertRecordRow(d) {
         var f = d.fields || {};
@@ -606,6 +600,7 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
             '<td class="editable" data-field="person_name">' + val('person_name') + '</td>' +
             '<td class="editable" data-field="employee_id">' + val('employee_id') + '</td>' +
             '<td>' + escapeHtml(d.upload_time || '') + '</td>' +
+            '<td class="editable" data-field="migrate_domain">' + escapeHtml(f.migrate_domain || '是') + '</td>' +
             '<td><a href="' + imgUrl + '" target="_blank"><img class="record-image" src="' + imgUrl + '" alt="' + escapeHtml(d.image_name || '上传图片') + '"></a></td>' +
             '<td><button class="edit-btn" data-id="' + d.record_id + '">✏️ 编辑</button>' +
             '<button class="delete-btn" data-id="' + d.record_id + '">🗑️ 删除</button>' +
@@ -619,10 +614,10 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
             table = document.createElement('table');
             table.id = 'records-table';
             table.innerHTML =
-                '<thead><tr><th>审核状态</th>' +
-                '<th>机器名</th><th>SN号</th><th>网卡1</th><th>网卡1 MAC</th>' +
-                '<th>网卡2</th><th>网卡2 MAC</th><th>硬盘(GB)</th><th>内存(GB)</th><th>部门</th><th>姓名</th><th>工号</th>' +
-                '<th>上传时间</th><th>原图</th>' +
+                '<thead><tr><th class="sortable" data-sort-key="reviewed">审核状态</th>' +
+                '<th class="sortable" data-sort-key="machine_name">机器名</th><th class="sortable" data-sort-key="sn_number">SN号</th><th class="sortable" data-sort-key="nic1_name">网卡1</th><th class="sortable" data-sort-key="nic1_mac">网卡1 MAC</th>' +
+                '<th class="sortable" data-sort-key="nic2_name">网卡2</th><th class="sortable" data-sort-key="nic2_mac">网卡2 MAC</th><th class="sortable" data-sort-key="disk_gb">硬盘(GB)</th><th class="sortable" data-sort-key="memory_gb">内存(GB)</th><th class="sortable" data-sort-key="department">部门</th><th class="sortable" data-sort-key="person_name">姓名</th><th class="sortable" data-sort-key="employee_id">工号</th>' +
+                '<th class="sortable" data-sort-key="upload_time">上传时间</th><th class="sortable" data-sort-key="migrate_domain">是否迁域</th><th>原图</th>' +
                 '<th>操作</th>' +
                 '</tr></thead><tbody>' + rowHtml + '</tbody>';
             if (emptyDiv) {
@@ -632,8 +627,8 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
             // 已有表格：新记录插入到最顶部（列表按时间倒序）
             var tbody = table.querySelector('tbody');
             tbody.insertAdjacentHTML('afterbegin', rowHtml);
-            // 与后端导出保持一致：首页最多展示最新 200 条。
-            while (tbody.children.length > 200) {
+            // 与后端导出保持一致：首页最多展示最新 1000 条。
+            while (tbody.children.length > 1000) {
                 tbody.removeChild(tbody.lastElementChild);
             }
             // 闪一下高亮，提示新行
@@ -648,30 +643,9 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
         var h3 = document.querySelector('.toolbar h3');
         if (h3) {
             var m = h3.textContent.match(/(\d+)/);
-            var count = m ? Math.min(200, parseInt(m[1], 10) + 1) : 1;
+            var count = m ? Math.min(1000, parseInt(m[1], 10) + 1) : 1;
             h3.textContent = '📊 历史记录（' + count + ' 条）';
         }
-    }
-        var sortMachineBtn = document.getElementById('sort-machine-btn');
-    if (sortMachineBtn) {
-        var machineSortAscending = true;
-        sortMachineBtn.addEventListener('click', function () {
-            var table = document.getElementById('records-table');
-            if (!table) return;
-            var tbody = table.querySelector('tbody');
-            var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
-            rows.sort(function (a, b) {
-                var av = a.getAttribute('data-machine-name') || '';
-                var bv = b.getAttribute('data-machine-name') || '';
-                if (!av.trim() && bv.trim()) return 1;
-                if (av.trim() && !bv.trim()) return -1;
-                var result = compareMachineNames(av, bv);
-                return machineSortAscending ? result : -result;
-            });
-            rows.forEach(function (row) { tbody.appendChild(row); });
-            machineSortAscending = !machineSortAscending;
-            sortMachineBtn.textContent = '机器名：' + (machineSortAscending ? '升序' : '降序');
-        });
     }
     function compareMachineNames(a, b) {
         a = String(a || '').trim().toUpperCase();
@@ -742,24 +716,36 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
     if (reviewFilter) {
         reviewFilter.addEventListener('change', applyRecordFilters);
     }
-    var sortUploadBtn = document.getElementById('sort-upload-btn');
-    if (sortUploadBtn) {
-        var uploadSortDescending = true;
-        sortUploadBtn.addEventListener('click', function () {
-            var table = document.getElementById('records-table');
-            if (!table) return;
-            var tbody = table.querySelector('tbody');
-            var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
-            rows.sort(function (a, b) {
-                var at = Date.parse((a.getAttribute('data-upload-time') || '').trim().replace(' ', 'T')) || 0;
-                var bt = Date.parse((b.getAttribute('data-upload-time') || '').trim().replace(' ', 'T')) || 0;
-                return uploadSortDescending ? bt - at : at - bt;
-            });
-            rows.forEach(function (row) { tbody.appendChild(row); });
-            uploadSortDescending = !uploadSortDescending;
-            sortUploadBtn.textContent = '上传时间：' + (uploadSortDescending ? '降序' : '升序');
+    var sortState = { key: null, direction: 'ascending' };
+    function sortTable(key) {
+        var table = document.getElementById('records-table');
+        if (!table) return;
+        sortState.direction = sortState.key === key && sortState.direction === 'ascending' ? 'descending' : 'ascending';
+        sortState.key = key;
+        var tbody = table.querySelector('tbody');
+        var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
+        rows.sort(function (a, b) {
+            var av = getSortValue(a, key), bv = getSortValue(b, key), result;
+            if (key === 'machine_name') result = compareMachineNames(av, bv);
+            else if (key === 'upload_time') result = (Date.parse(String(av).replace(' ', 'T')) || 0) - (Date.parse(String(bv).replace(' ', 'T')) || 0);
+            else result = String(av).localeCompare(String(bv), 'zh-CN', { numeric: true, sensitivity: 'base' });
+            return sortState.direction === 'ascending' ? result : -result;
+        });
+        rows.forEach(function (row) { tbody.appendChild(row); });
+        Array.prototype.forEach.call(table.querySelectorAll('th.sortable'), function (header) {
+            header.setAttribute('aria-sort', header.getAttribute('data-sort-key') === key ? sortState.direction : 'none');
         });
     }
+    function getSortValue(row, key) {
+        if (key === 'reviewed') return row.querySelector('.review-btn').getAttribute('data-reviewed');
+        if (key === 'upload_time') return row.getAttribute('data-upload-time') || '';
+        var cell = row.querySelector('td[data-field="' + key + '"]');
+        return cell ? cell.textContent.trim().replace(/^-$/, '') : '';
+    }
+    document.addEventListener('click', function (event) {
+        var header = event.target.closest ? event.target.closest('th.sortable') : null;
+        if (header) sortTable(header.getAttribute('data-sort-key'));
+    });
 })();
 </script>
 
@@ -807,6 +793,7 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
                 <div><label>部门</label><input id="f-department"></div>
                 <div><label>姓名</label><input id="f-person_name"></div>
                 <div><label>工号</label><input id="f-employee_id"></div>
+                <div><label>是否迁域</label><select id="f-migrate_domain"><option value="是" selected>是</option><option value="否">否</option></select></div>
             </div>
             <div class="save-msg" id="edit-msg"></div>
         </div>
@@ -854,7 +841,7 @@ td img { max-width: 200px; max-height: 120px; border-radius: 4px; cursor: pointe
     var msg = document.getElementById('edit-msg');
     var fieldKeys = ['machine_name', 'sn_number', 'nic1_name', 'nic1_mac',
                      'nic2_name', 'nic2_mac', 'disk_gb', 'memory_gb',
-                     'department', 'person_name', 'employee_id'];
+                     'department', 'person_name', 'employee_id', 'migrate_domain'];
 
     // 打开编辑弹窗（事件委托：动态插入的新行也能响应）
     document.addEventListener('click', function (e) {

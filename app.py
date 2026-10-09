@@ -239,7 +239,7 @@ def index():
     if 'user' not in session:
         return redirect(url_for('login'))
     # 所有登录用户共享记录和操作权限
-    records = database.list_records(limit=200)
+    records = database.list_records(limit=1000)
     return render_template('index.html', user=session['user'],
                            records=records)
 

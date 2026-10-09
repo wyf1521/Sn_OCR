@@ -47,10 +47,12 @@ def init_db():
     existing = {row[1] for row in cur.execute('PRAGMA table_info(ocr_records)').fetchall()}
     for name in ('brand', 'computer_model', 'cpu', 'system_type',
                  'operating_system', 'version', 'department', 'person_name',
-                 'employee_id', 'install_time', 'reviewed'):
+                 'employee_id', 'install_time', 'migrate_domain', 'reviewed'):
         if name not in existing:
             if name == 'reviewed':
                 cur.execute('ALTER TABLE ocr_records ADD COLUMN reviewed INTEGER NOT NULL DEFAULT 0')
+            elif name == 'migrate_domain':
+                cur.execute("ALTER TABLE ocr_records ADD COLUMN migrate_domain TEXT NOT NULL DEFAULT '是'")
             else:
                 cur.execute(f'ALTER TABLE ocr_records ADD COLUMN {name} TEXT')
     # 解析后的结构化字段（来自所有图片，便于 Excel 输出汇总）
@@ -108,8 +110,8 @@ def save_record(username, image_name, image_path, parsed: dict, full_text: str):
          machine_name, nic1_name, nic1_mac, nic2_name, nic2_mac,
          disk_gb, memory_gb, sn_number, extra_info, upload_time,
          brand, computer_model, cpu, system_type, operating_system, version,
-         department, person_name, employee_id, install_time)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         department, person_name, employee_id, install_time, migrate_domain)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     ''', (
         username, image_name, image_path, full_text,
         parsed.get('machine_name', ''),
@@ -125,7 +127,7 @@ def save_record(username, image_name, image_path, parsed: dict, full_text: str):
         ,parsed.get('brand', ''), parsed.get('computer_model', ''), parsed.get('cpu', ''),
         parsed.get('system_type', ''), parsed.get('operating_system', ''), parsed.get('version', ''),
         parsed.get('department', ''), parsed.get('person_name', ''), parsed.get('employee_id', ''),
-        parsed.get('install_time', '')
+        parsed.get('install_time', ''), parsed.get('migrate_domain', '是') or '是'
     ))
     record_id = cur.lastrowid
 
@@ -154,7 +156,7 @@ def overwrite_record(record_id: int, username, image_name, image_path,
             machine_name=?, nic1_name=?, nic1_mac=?, nic2_name=?, nic2_mac=?,
             disk_gb=?, memory_gb=?, sn_number=?, extra_info=?, upload_time=?,
             brand=?, computer_model=?, cpu=?, system_type=?, operating_system=?, version=?,
-            department=?, person_name=?, employee_id=?, install_time=?
+            department=?, person_name=?, employee_id=?, install_time=?, migrate_domain=?
             , reviewed=0
         WHERE id=?
     ''', (
@@ -165,7 +167,7 @@ def overwrite_record(record_id: int, username, image_name, image_path,
         parsed.get('brand', ''), parsed.get('computer_model', ''), parsed.get('cpu', ''),
         parsed.get('system_type', ''), parsed.get('operating_system', ''), parsed.get('version', ''),
         parsed.get('department', ''), parsed.get('person_name', ''), parsed.get('employee_id', ''),
-        parsed.get('install_time', ''), record_id
+        parsed.get('install_time', ''), parsed.get('migrate_domain', '是') or '是', record_id
     ))
     changed = cur.rowcount > 0
     if changed:
@@ -229,7 +231,7 @@ def get_record(record_id):
 EDITABLE_FIELDS = [
     'machine_name', 'nic1_name', 'nic1_mac',
     'nic2_name', 'nic2_mac', 'disk_gb', 'memory_gb', 'sn_number',
-    'department', 'person_name', 'employee_id', 'reviewed',
+    'department', 'person_name', 'employee_id', 'migrate_domain', 'reviewed',
 ]
 
 
