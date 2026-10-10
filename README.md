@@ -49,7 +49,10 @@ Sn_OCR/
 ├── data/
 │   ├── ocr_data.db     # SQLite 数据库
 │   └── exports/ocr_records.xlsx
+├── pyproject.toml
 ├── requirements.txt
+├── .env.example        # 部署环境变量模板
+├── deploy/sn_ocr.service
 └── README.md
 ```
 
@@ -59,17 +62,16 @@ Sn_OCR/
 
 ```bash
 sudo apt update
-sudo apt install -y python3.10 python3.10-venv python3-pip libgomp1
+sudo apt install -y python3.10 curl ca-certificates libgomp1
+curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
 ### 2. 创建虚拟环境并安装依赖
 
 ```bash
 cd /opt/Sn_OCR   # 把代码放这里
-python3 -m venv venv
-source venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
+uv venv .venv
+uv pip install -r requirements.txt
 ```
 
 > 使用第三方大模型 OCR 无需安装本地模型。部署时先执行 `cp ocr_config.example.json ocr_config.json`，再填写 `ocr_config.json` 的 API key；`ocr_config.json` 只保存在服务器本地。
@@ -86,28 +88,25 @@ cp ocr_config.example.json ocr_config.json
 "api_key": "sk-xxxxxxxxxxxxxxxx"
 ```
 
-### 4. 修改账号
+### 4. 配置环境变量
 
-账号密码不写入代码，部署前设置环境变量：
+复制环境变量模板并填写密钥：
 ```bash
-export SECRET_KEY="$(openssl rand -hex 32)"
-export SN_OCR_ADMIN_PASSWORD='YourStrongPwd!'
+cp .env.example .env
 ```
+
+至少替换 `SECRET_KEY`、`SN_OCR_ADMIN_PASSWORD` 和 `SN_OCR_API_TOKEN`。可用 `openssl rand -hex 32` 生成随机值。仅在 HTTPS 反向代理后把 `SN_OCR_COOKIE_SECURE` 改为 `1`。
 
 ### 5. 启动
 
 开发模式快速验证：
 ```bash
+set -a; source .env; set +a
 python app.py
 # 浏览器打开 http://服务器IP:5000
 ```
 
-生产环境推荐 **gunicorn** + nginx：
-
-```bash
-pip install gunicorn
-gunicorn -w 2 -b 0.0.0.0:5000 app:app
-```
+生产环境使用 uv 安装到 `.venv` 的 **gunicorn**，由 systemd 加载 `.env`：
 
 nginx 反代示例（`/etc/nginx/sites-available/sn_ocr`）：
 ```
@@ -125,26 +124,15 @@ server {
 }
 ```
 
-### 6. （可选）用 systemd 守护进程
+### 6. 用 systemd 守护进程
 
-`/etc/systemd/system/sn_ocr.service`：
-```ini
-[Unit]
-Description=Sn OCR service
-After=network.target
+仓库提供 `deploy/sn_ocr.service`。它监听 `127.0.0.1:5000`，工作目录为 `/opt/Sn_OCR`，并读取同目录下的 `.env`。安装前确认代码和虚拟环境位于该路径，且 `www-data` 对项目目录、`uploads/`、`data/` 有写权限。
 
-[Service]
-WorkingDirectory=/opt/Sn_OCR
-ExecStart=/opt/Sn_OCR/venv/bin/gunicorn -w 2 -b 127.0.0.1:5000 app:app
-Restart=always
-User=www-data
-
-[Install]
-WantedBy=multi-user.target
-```
 ```bash
+sudo cp deploy/sn_ocr.service /etc/systemd/system/sn_ocr.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now sn_ocr
+sudo systemctl status sn_ocr
 ```
 
 ## 数据备份

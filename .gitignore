@@ -21,3 +21,6 @@ __pycache__/
 .vscode/
 *.swp
 Thumbs.db
+
+.venv/
+uv.lock
