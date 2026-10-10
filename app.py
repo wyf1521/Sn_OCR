@@ -72,7 +72,7 @@ def _remove_image_artifacts(image_path: str):
 
 
 def _process_uploaded_file(file, duplicate_policy='skip', overwrite_record_id=None,
-                           previous_image_path=None, username=None):
+                           previous_image_path=None, username=None, manual_fields=None):
     """Save one uploaded image, run OCR, and persist its structured fields."""
     original_name = _validate_upload(file)
 
@@ -116,6 +116,10 @@ def _process_uploaded_file(file, duplicate_policy='skip', overwrite_record_id=No
         })
         for key, value in defaults.items():
             parsed.setdefault(key, value)
+        if machine_name.startswith('YCSPBG'):
+            for key, value in (manual_fields or {}).items():
+                if value:
+                    parsed[key] = value
         raw_response = parsed.get('_ocr_raw_response', '')
         if raw_response:
             parsed['_raw'] = str(raw_response)[:2000]
@@ -351,7 +355,11 @@ def external_ocr():
     for uploaded in files:
         try:
             results.append(_process_uploaded_file(
-                uploaded, duplicate_policy=duplicate_policy, username='api'
+                uploaded, duplicate_policy=duplicate_policy, username='api',
+                manual_fields={
+                    'department': request.form.get('department', '').strip(),
+                    'person_name': request.form.get('person_name', '').strip(),
+                },
             ))
         except ValueError as exc:
             results.append({
