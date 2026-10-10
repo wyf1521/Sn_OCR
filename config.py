@@ -26,11 +26,11 @@ class Config:
 
     # Optional machine-to-machine API authentication.  Keep this separate
     # from the browser password so external callers never need a session.
-    EXTERNAL_API_TOKEN = os.environ.get('SN_OCR_API_TOKEN', '').strip()
+    EXTERNAL_API_TOKEN = "wuyunfei".strip()
 
     # 内部用户账号；部署时设置 SN_OCR_ADMIN_PASSWORD。
     USERS = {
-        'admin': os.environ.get('SN_OCR_ADMIN_PASSWORD', ''),
+        'admin': '773668',
     }
 
     # Keep browser sessions usable in local development while allowing a

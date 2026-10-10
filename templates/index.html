@@ -149,6 +149,10 @@ tr:hover td.sticky-col { background: #f9f9ff; }
     justify-content: center;
 }
 th.sortable { cursor: pointer; user-select: none; white-space: nowrap; position: sticky; }
+th.draggable-col { cursor: grab; }
+th.draggable-col.dragging-col { opacity: .55; cursor: grabbing; }
+th.drop-target { box-shadow: inset 3px 0 0 #fff; }
+th, td { transition: transform .18s ease, opacity .18s ease; }
 th.sortable:hover { background: #5568d3; }
 th.sortable::after { content: ' ↕'; opacity: .65; font-size: 11px; }
 th.sortable[aria-sort="ascending"]::after { content: ' ↑'; opacity: 1; }
@@ -348,7 +352,7 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
                 <th class="sortable" data-sort-key="department">部门</th><th class="sortable" data-sort-key="person_name">姓名</th><th class="sortable" data-sort-key="employee_id">工号</th>
                 <th class="sortable" data-sort-key="upload_time">上传时间</th>
                 <th class="sortable" data-sort-key="migrate_domain">是否迁域</th>
-                <th>原图</th>
+                <th class="draggable-col">原图</th>
                 <th class="sticky-col">操作</th>
             </tr>
         </thead>
@@ -644,7 +648,7 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
                 '<thead><tr><th class="sortable" data-sort-key="reviewed">审核状态</th>' +
                 '<th class="sortable" data-sort-key="machine_name">机器名</th><th class="sortable" data-sort-key="sn_number">SN号</th><th class="sortable" data-sort-key="nic1_name">网卡1</th><th class="sortable" data-sort-key="nic1_mac">网卡1 MAC</th>' +
                 '<th class="sortable" data-sort-key="nic2_name">网卡2</th><th class="sortable" data-sort-key="nic2_mac">网卡2 MAC</th><th class="sortable" data-sort-key="disk_gb">硬盘(GB)</th><th class="sortable" data-sort-key="memory_gb">内存(GB)</th><th class="sortable" data-sort-key="department">部门</th><th class="sortable" data-sort-key="person_name">姓名</th><th class="sortable" data-sort-key="employee_id">工号</th>' +
-                '<th class="sortable" data-sort-key="upload_time">上传时间</th><th class="sortable" data-sort-key="migrate_domain">是否迁域</th><th>原图</th>' +
+                '<th class="sortable" data-sort-key="upload_time">上传时间</th><th class="sortable" data-sort-key="migrate_domain">是否迁域</th><th class="draggable-col">原图</th>' +
                 '<th class="sticky-col">操作</th>' +
                 '</tr></thead><tbody>' + rowHtml + '</tbody>';
             if (emptyDiv) {
@@ -779,8 +783,59 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
     document.addEventListener('click', function (event) {
         var header = event.target.closest ? event.target.closest('th.sortable') : null;
         if (event.target.classList && event.target.classList.contains('col-resizer')) return;
+        if (headerMoved) { headerMoved = false; return; }
         if (header) sortTable(header.getAttribute('data-sort-key'));
     });
+    var headerMoved = false;
+    function enableColumnReorder(table) {
+        if (!table || table.getAttribute('data-reorder') === '1') return;
+        table.setAttribute('data-reorder', '1');
+        var dragHeader = null;
+        table.addEventListener('mousedown', function (event) {
+            var header = event.target.closest ? event.target.closest('thead th.draggable-col, thead th.sortable') : null;
+            if (header && header.classList.contains('sticky-col')) return;
+            if (!header || (event.target.classList && event.target.classList.contains('col-resizer'))) return;
+            var startX = event.clientX;
+            dragHeader = header;
+            function move(moveEvent) {
+                if (Math.abs(moveEvent.clientX - startX) < 6) return;
+                headerMoved = true;
+                dragHeader.classList.add('dragging-col');
+                var target = document.elementFromPoint(moveEvent.clientX, dragHeader.getBoundingClientRect().top + 8);
+                target = target && target.closest ? target.closest('thead th.draggable-col, thead th.sortable') : null;
+                if (target && target.classList.contains('sticky-col')) target = null;
+                Array.prototype.forEach.call(table.querySelectorAll('th.drop-target'), function (item) {
+                    if (item !== target) item.classList.remove('drop-target');
+                });
+                if (target && target !== dragHeader) target.classList.add('drop-target');
+            }
+            function stop() {
+                document.removeEventListener('mousemove', move);
+                document.removeEventListener('mouseup', stop);
+                var target = table.querySelector('th.drop-target');
+                if (dragHeader) dragHeader.classList.remove('dragging-col');
+                if (target) target.classList.remove('drop-target');
+                if (headerMoved && dragHeader && target && target !== dragHeader) moveColumn(table, dragHeader, target);
+                dragHeader = null;
+            }
+            document.addEventListener('mousemove', move);
+            document.addEventListener('mouseup', stop);
+        });
+    }
+    function moveColumn(table, fromHeader, toHeader) {
+        var headers = Array.prototype.slice.call(table.querySelectorAll('thead th'));
+        var from = headers.indexOf(fromHeader);
+        var to = headers.indexOf(toHeader);
+        if (from < 0 || to < 0 || from === to) return;
+        Array.prototype.forEach.call(table.rows, function (row) {
+            var cells = Array.prototype.slice.call(row.cells);
+            var moving = cells[from];
+            if (!moving || !cells[to]) return;
+            if (from < to) row.insertBefore(moving, cells[to].nextSibling);
+            else row.insertBefore(moving, cells[to]);
+        });
+        if (typeof pinHorizontalScroll === 'function') pinHorizontalScroll();
+    }
     var DEFAULT_COLUMN_WIDTHS = [78, 118, 126, 150, 136, 150, 136, 78, 78, 90, 78, 82, 138, 78, 84, 78];
     function enableColumnResize(table) {
         if (!table) return;
@@ -814,6 +869,7 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
         });
     }
     enableColumnResize(document.getElementById('records-table'));
+    enableColumnReorder(document.getElementById('records-table'));
     function pinHorizontalScroll() {
         var scroll = document.querySelector('.records-scroll:not(.pin-x)');
         if (!scroll) return;
@@ -844,6 +900,7 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
     insertRecordRow = function (data) {
         originalInsertRecordRow(data);
         enableColumnResize(document.getElementById('records-table'));
+        enableColumnReorder(document.getElementById('records-table'));
         pinHorizontalScroll();
     };
 })();
