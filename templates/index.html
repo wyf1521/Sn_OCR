@@ -91,6 +91,12 @@ header a:hover { text-decoration: underline; }
 .toolbar a.btn.inventory:hover { background: #005047; }
 .toolbar a.btn:hover { background: #218838; }
 .machine-search { width: 190px; padding: 8px 10px; border: 1px solid #ccd2e5; border-radius: 6px; font-size: 14px; }
+#machine-search { width: 280px; }
+.type-switch { display: inline-flex; overflow: hidden; border: 1px solid #ccd2e5; border-radius: 6px; background: #fff; }
+.type-switch button { border: 0; border-right: 1px solid #ccd2e5; background: #fff; color: #445; padding: 8px 14px; font-size: 14px; cursor: pointer; }
+.type-switch button:last-child { border-right: 0; }
+.type-switch button.active { background: #667eea; color: #fff; }
+.type-switch button:hover:not(.active) { background: #f3f5ff; }
 
 .flash-bar { padding: 12px; border-radius: 6px; margin-bottom: 16px; }
 .flash-bar.success { background: #d4edda; color: #155724; }
@@ -325,7 +331,12 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
     {% endwith %}
 
     <div class="toolbar">
-        <input type="search" id="machine-search" class="machine-search" placeholder="搜索机器名..." aria-label="搜索机器名">
+        <div class="type-switch" id="type-switch" role="group" aria-label="切换电脑类型">
+            <button type="button" data-type="all" class="active" aria-pressed="true">全部</button>
+            <button type="button" data-type="workstation" aria-pressed="false">工位电脑</button>
+            <button type="button" data-type="office" aria-pressed="false">办公电脑</button>
+        </div>
+        <input type="search" id="machine-search" class="machine-search" placeholder="搜索机器名、SN、网卡、部门等..." aria-label="搜索列表内容">
         <select id="review-filter" class="machine-search" aria-label="筛选审核状态">
             <option value="all">全部记录</option>
             <option value="reviewed">已审核</option>
@@ -728,17 +739,39 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
     Array.prototype.forEach.call(document.querySelectorAll('#records-table tbody tr'), normalizeDynamicRow);
     var machineSearch = document.getElementById('machine-search');
     var reviewFilter = document.getElementById('review-filter');
+    function currentComputerType() {
+        var active = document.querySelector('#type-switch button.active');
+        return active ? (active.getAttribute('data-type') || 'all') : 'all';
+    }
+    function computerTypeOf(machineName) {
+        var name = String(machineName || '').trim().toUpperCase();
+        if (name.indexOf('YCSPGW') === 0) return 'workstation';
+        if (name.indexOf('YCSPBG') === 0) return 'office';
+        return 'other';
+    }
+    function rowSearchText(row) {
+        var parts = [];
+        Array.prototype.forEach.call(row.cells, function (cell) {
+            if (cell.classList.contains('sticky-col')) return;
+            var image = cell.querySelector('.record-image');
+            if (image) parts.push(image.getAttribute('alt') || '');
+            parts.push(cell.textContent || '');
+        });
+        return parts.join('\n').toUpperCase();
+    }
     function applyRecordFilters() {
         var query = machineSearch ? machineSearch.value.trim().toUpperCase() : '';
         var reviewMode = reviewFilter ? reviewFilter.value : 'all';
+        var computerType = currentComputerType();
         var table = document.getElementById('records-table');
         if (!table) return;
         Array.prototype.forEach.call(table.querySelectorAll('tbody tr'), function (row) {
             var machineName = (row.getAttribute('data-machine-name') || '').trim().toUpperCase();
             var reviewed = row.querySelector('.review-btn') && row.querySelector('.review-btn').getAttribute('data-reviewed') === '1';
-            var matchesMachine = !query || machineName.indexOf(query) !== -1;
+            var matchesQuery = !query || rowSearchText(row).indexOf(query) !== -1;
             var matchesReview = reviewMode === 'all' || (reviewMode === 'reviewed' ? reviewed : !reviewed);
-            row.style.display = matchesMachine && matchesReview ? '' : 'none';
+            var matchesType = computerType === 'all' || computerTypeOf(machineName) === computerType;
+            row.style.display = matchesQuery && matchesReview && matchesType ? '' : 'none';
         });
     }
     // The edit/review handlers live in the second script block below. Expose
@@ -751,11 +784,26 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
     if (reviewFilter) {
         reviewFilter.addEventListener('change', applyRecordFilters);
     }
+    var typeSwitch = document.getElementById('type-switch');
+    if (typeSwitch) {
+        typeSwitch.addEventListener('click', function (event) {
+            var button = event.target.closest ? event.target.closest('button[data-type]') : null;
+            if (!button || !typeSwitch.contains(button)) return;
+            Array.prototype.forEach.call(typeSwitch.querySelectorAll('button'), function (item) {
+                var active = item === button;
+                item.classList.toggle('active', active);
+                item.setAttribute('aria-pressed', active ? 'true' : 'false');
+            });
+            applyRecordFilters();
+        });
+    }
     var sortState = { key: null, direction: 'ascending' };
-    function sortTable(key) {
+    function sortTable(key, preserveDirection) {
         var table = document.getElementById('records-table');
-        if (!table) return;
-        sortState.direction = sortState.key === key && sortState.direction === 'ascending' ? 'descending' : 'ascending';
+        if (!table || !key) return;
+        if (!preserveDirection) {
+            sortState.direction = sortState.key === key && sortState.direction === 'ascending' ? 'descending' : 'ascending';
+        }
         sortState.key = key;
         var tbody = table.querySelector('tbody');
         var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
@@ -896,6 +944,110 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
     }
     pinHorizontalScroll();
     window.addEventListener('resize', pinHorizontalScroll);
+    var RECORD_COLUMNS = ['reviewed', 'machine_name', 'sn_number', 'nic1_name', 'nic1_mac', 'nic2_name', 'nic2_mac', 'disk_gb', 'memory_gb', 'department', 'person_name', 'employee_id', 'upload_time', 'migrate_domain', 'image', 'actions'];
+    function headerKey(header) {
+        if (header.classList.contains('sticky-col')) return 'actions';
+        return header.getAttribute('data-sort-key') || 'image';
+    }
+    function alignRowToHeaders(row, table) {
+        var keys = Array.prototype.map.call(table.querySelectorAll('thead th'), headerKey);
+        var cells = {};
+        Array.prototype.forEach.call(row.cells, function (cell, index) {
+            cells[RECORD_COLUMNS[index]] = cell;
+        });
+        keys.forEach(function (key) {
+            if (cells[key]) row.appendChild(cells[key]);
+        });
+    }
+    function recordImageUrl(record) {
+        var path = record.image_path || '';
+        var filename = path.split(/[\/\\]/).pop();
+        return filename ? '/uploads/' + encodeURIComponent(filename) : '';
+    }
+    function displayText(value) {
+        return value == null || String(value).trim() === '' ? '-' : escapeHtml(value);
+    }
+    function recordRowHtml(record) {
+        var reviewed = Number(record.reviewed) === 1;
+        var id = record.id;
+        var imgUrl = recordImageUrl(record);
+        return '<tr data-id="' + escapeHtml(id) + '" data-machine-name="' + escapeHtml(record.machine_name || '') + '" data-upload-time="' + escapeHtml(record.upload_time || '') + '">' +
+            '<td><button type="button" class="review-btn' + (reviewed ? ' reviewed' : '') + '" data-id="' + escapeHtml(id) + '" data-reviewed="' + (reviewed ? '1' : '0') + '">' + (reviewed ? '已审核' : '未审核') + '</button></td>' +
+            '<td class="editable" data-field="machine_name"><b>' + displayText(record.machine_name) + '</b></td>' +
+            '<td class="editable" data-field="sn_number"><code>' + displayText(record.sn_number) + '</code></td>' +
+            '<td class="editable" data-field="nic1_name">' + displayText(record.nic1_name) + '</td>' +
+            '<td class="editable" data-field="nic1_mac"><code>' + displayText(record.nic1_mac) + '</code></td>' +
+            '<td class="editable" data-field="nic2_name">' + displayText(record.nic2_name) + '</td>' +
+            '<td class="editable" data-field="nic2_mac"><code>' + displayText(record.nic2_mac) + '</code></td>' +
+            '<td class="editable" data-field="disk_gb">' + displayText(record.disk_gb) + '</td>' +
+            '<td class="editable" data-field="memory_gb">' + displayText(record.memory_gb) + '</td>' +
+            '<td class="editable" data-field="department">' + displayText(record.department) + '</td>' +
+            '<td class="editable" data-field="person_name">' + displayText(record.person_name) + '</td>' +
+            '<td class="editable" data-field="employee_id">' + displayText(record.employee_id) + '</td>' +
+            '<td>' + displayText(record.upload_time) + '</td>' +
+            '<td class="editable" data-field="migrate_domain">' + escapeHtml(record.migrate_domain || '是') + '</td>' +
+            '<td><a href="' + escapeHtml(imgUrl) + '" target="_blank"><img class="record-image" src="' + escapeHtml(imgUrl) + '" alt="' + escapeHtml(record.image_name || '上传图片') + '"></a></td>' +
+            '<td class="sticky-col"><button type="button" class="reprocess-btn edit-btn" data-id="' + escapeHtml(id) + '">重新识别</button>' +
+            '<button type="button" class="edit-btn" data-id="' + escapeHtml(id) + '">✏️ 编辑</button>' +
+            '<button type="button" class="delete-btn" data-id="' + escapeHtml(id) + '">🗑️ 删除</button></td>' +
+            '</tr>';
+    }
+    function recordsTableHtml(body) {
+        return '<thead><tr><th class="sortable" data-sort-key="reviewed">审核状态</th>' +
+            '<th class="sortable" data-sort-key="machine_name">机器名</th><th class="sortable" data-sort-key="sn_number">SN号</th><th class="sortable" data-sort-key="nic1_name">网卡1</th><th class="sortable" data-sort-key="nic1_mac">网卡1 MAC</th>' +
+            '<th class="sortable" data-sort-key="nic2_name">网卡2</th><th class="sortable" data-sort-key="nic2_mac">网卡2 MAC</th><th class="sortable" data-sort-key="disk_gb">硬盘(GB)</th><th class="sortable" data-sort-key="memory_gb">内存(GB)</th><th class="sortable" data-sort-key="department">部门</th><th class="sortable" data-sort-key="person_name">姓名</th><th class="sortable" data-sort-key="employee_id">工号</th>' +
+            '<th class="sortable" data-sort-key="upload_time">上传时间</th><th class="sortable" data-sort-key="migrate_domain">是否迁域</th><th class="draggable-col">原图</th>' +
+            '<th class="sticky-col">操作</th></tr></thead><tbody>' + body + '</tbody>';
+    }
+    function renderRecordList(records) {
+        var heading = document.querySelector('.toolbar h3');
+        if (heading) heading.textContent = '📊 历史记录（' + records.length + ' 条）';
+        var scroll = document.querySelector('.records-scroll:not(.pin-x)');
+        var pin = document.querySelector('.records-scroll.pin-x');
+        if (!records.length) {
+            if (scroll) scroll.remove();
+            if (pin) pin.remove();
+            if (!document.querySelector('.empty')) {
+                var empty = document.createElement('div');
+                empty.className = 'empty';
+                empty.textContent = '还没有记录，赶快上传第一张图片吧 🚀';
+                document.querySelector('.toolbar').insertAdjacentElement('afterend', empty);
+            }
+            return;
+        }
+        var table = document.getElementById('records-table');
+        if (!table) {
+            var emptyState = document.querySelector('.empty');
+            table = document.createElement('table');
+            table.id = 'records-table';
+            scroll = document.createElement('div');
+            scroll.className = 'records-scroll';
+            scroll.appendChild(table);
+            if (emptyState) emptyState.parentNode.replaceChild(scroll, emptyState);
+            else document.querySelector('.toolbar').insertAdjacentElement('afterend', scroll);
+            table.innerHTML = recordsTableHtml('');
+            enableColumnResize(table);
+            enableColumnReorder(table);
+        }
+        table.querySelector('tbody').innerHTML = records.map(recordRowHtml).join('');
+        Array.prototype.forEach.call(table.querySelectorAll('tbody tr'), function (row) {
+            alignRowToHeaders(row, table);
+        });
+        if (sortState.key) sortTable(sortState.key, true);
+        applyRecordFilters();
+        pinHorizontalScroll();
+    }
+    window.refreshRecordList = function () {
+        return fetch('/api/records', { headers: { 'Accept': 'application/json' } })
+            .then(function (resp) {
+                if (!resp.ok) throw new Error('刷新列表失败');
+                return resp.json();
+            })
+            .then(function (records) {
+                if (!Array.isArray(records)) throw new Error('刷新列表失败');
+                renderRecordList(records);
+            });
+    };
     var originalInsertRecordRow = insertRecordRow;
     insertRecordRow = function (data) {
         originalInsertRecordRow(data);
@@ -978,13 +1130,24 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
             if (!table) return;
             var query = search ? search.value.trim().toUpperCase() : '';
             var mode = filter ? filter.value : 'all';
+            var activeType = document.querySelector('#type-switch button.active');
+            var computerType = activeType ? (activeType.getAttribute('data-type') || 'all') : 'all';
             Array.prototype.forEach.call(table.querySelectorAll('tbody tr'), function (row) {
                 var machine = (row.getAttribute('data-machine-name') || '').trim().toUpperCase();
+                var rowType = machine.indexOf('YCSPGW') === 0 ? 'workstation' : (machine.indexOf('YCSPBG') === 0 ? 'office' : 'other');
                 var button = row.querySelector('.review-btn');
                 var reviewed = button && button.getAttribute('data-reviewed') === '1';
-                var matchesMachine = !query || machine.indexOf(query) !== -1;
+                var parts = [];
+                Array.prototype.forEach.call(row.cells, function (cell) {
+                    if (cell.classList.contains('sticky-col')) return;
+                    var image = cell.querySelector('.record-image');
+                    if (image) parts.push(image.getAttribute('alt') || '');
+                    parts.push(cell.textContent || '');
+                });
+                var matchesQuery = !query || parts.join('\n').toUpperCase().indexOf(query) !== -1;
                 var matchesReview = mode === 'all' || (mode === 'reviewed' ? reviewed : !reviewed);
-                row.style.display = matchesMachine && matchesReview ? '' : 'none';
+                var matchesType = computerType === 'all' || rowType === computerType;
+                row.style.display = matchesQuery && matchesReview && matchesType ? '' : 'none';
             });
         };
     }
@@ -1013,6 +1176,7 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
             }).then(function (resp) { return resp.json().then(function (data) { return { ok: resp.ok, data: data }; }); })
               .then(function (result) {
                   if (!result.ok || !result.data.success) throw new Error(result.data.error || '保存审核状态失败');
+                  if (window.refreshRecordList) return window.refreshRecordList();
                   reviewBtn.setAttribute('data-reviewed', next ? '1' : '0');
                   reviewBtn.textContent = next ? '已审核' : '未审核';
                   reviewBtn.classList.toggle('reviewed', next);
@@ -1057,7 +1221,11 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
     });
 
     function deleteRecord(id) {
-        if (!window.confirm('确定删除这条记录及对应图片吗？')) return;
+        var row = document.querySelector('tr[data-id="' + id + '"]');
+        var machineName = row ? (row.getAttribute('data-machine-name') || '').trim() : '';
+        var label = machineName || '这条记录';
+        if (!window.confirm('确定删除「' + label + '」及对应图片吗？')) return;
+        if (!window.confirm('再次确认：删除「' + label + '」后无法恢复，是否继续？')) return;
 
         fetch('/api/record/' + encodeURIComponent(id), { method: 'DELETE' })
             .then(function (resp) {
@@ -1069,20 +1237,7 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
                 if (!result.ok || !result.data.success) {
                     throw new Error(result.data.error || '删除失败');
                 }
-                var row = document.querySelector('tr[data-id="' + id + '"]');
-                if (row) row.remove();
-
-                var h3 = document.querySelector('.toolbar h3');
-                if (h3) {
-                    var match = h3.textContent.match(/(\d+)/);
-                    var count = match ? Math.max(0, parseInt(match[1], 10) - 1) : 0;
-                    h3.textContent = '📊 历史记录（' + count + ' 条）';
-                }
-                var tbody = document.querySelector('#records-table tbody');
-                if (tbody && !tbody.children.length) {
-                    var scroll = document.querySelector('.records-scroll');
-                    if (scroll) scroll.outerHTML = '<div class="empty">还没有记录，赶快上传第一张图片吧 🚀</div>';
-                }
+                if (window.refreshRecordList) return window.refreshRecordList();
             })
             .catch(function (err) {
                 window.alert(err.message || String(err));
@@ -1114,26 +1269,8 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
             })
             .then(function (result) {
                 if (!result.ok || !result.data.success) throw new Error(result.data.error || '重新识别失败');
-                var row = document.querySelector('tr[data-id="' + id + '"]');
-                var fields = result.data.fields || {};
-                if (row) {
-                    if (fields.machine_name != null) row.setAttribute('data-machine-name', fields.machine_name || '');
-                    Object.keys(fields).forEach(function (key) {
-                        var cell = row.querySelector('td[data-field="' + key + '"]');
-                        if (cell) cell.textContent = fields[key] || '-';
-                    });
-                    var timeCell = row.querySelector('td:nth-last-child(4)');
-                    if (timeCell && result.data.upload_time) timeCell.textContent = result.data.upload_time;
-                    var image = row.querySelector('.record-image');
-                    if (image && result.data.image_url) {
-                        image.src = result.data.image_url + '?t=' + Date.now();
-                        var link = image.closest('a');
-                        if (link) link.href = result.data.image_url;
-                    }
-                    row.style.background = '#e8f4ff';
-                    setTimeout(function () { row.style.background = ''; }, 2000);
-                }
-                window.alert('已重新识别并覆盖原记录');
+                var refreshed = window.refreshRecordList ? window.refreshRecordList() : Promise.resolve();
+                return refreshed.then(function () { window.alert('已重新识别并覆盖原记录'); });
             })
             .catch(function (err) { window.alert(err.message || String(err)); })
             .finally(function () { button.disabled = false; button.textContent = originalText; });
@@ -1167,14 +1304,11 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
             if (data.success) {
                 msg.innerHTML = '<span style="color:#155724;">✅ 保存成功</span>';
                 console.log('[编辑] 记录#' + id + ' 已更新：', payload);
-                // 更新表格对应单元格
-                var row = document.querySelector('tr[data-id="' + id + '"]');
-                fieldKeys.forEach(function (k) {
-                    var cell = row.querySelector('td[data-field="' + k + '"]');
-                    if (cell) cell.textContent = payload[k] || '-';
-                });
-                if (payload.machine_name != null) row.setAttribute('data-machine-name', payload.machine_name);
-                setTimeout(closeModal, 600);
+                var refreshed = window.refreshRecordList ? window.refreshRecordList() : Promise.resolve();
+                refreshed.then(function () { setTimeout(closeModal, 400); })
+                    .catch(function () {
+                        msg.innerHTML = '<span style="color:#c0392b;">❌ 已保存，但列表刷新失败</span>';
+                    });
             } else {
                 msg.innerHTML = '<span style="color:#c0392b;">❌ ' + escapeHtml(data.error || '保存失败') + '</span>';
             }
