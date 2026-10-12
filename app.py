@@ -243,9 +243,7 @@ def index():
     if 'user' not in session:
         return redirect(url_for('login'))
     # 所有登录用户共享记录和操作权限
-    records = database.list_records(limit=1000)
-    return render_template('index.html', user=session['user'],
-                           records=records)
+    return render_template('index.html', user=session['user'])
 
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -469,8 +467,27 @@ def export_inventory():
 @app.route('/api/records')
 @login_required
 def api_records():
-    """JSON API：返回全部记录（便于其他系统对接）"""
-    return jsonify(database.list_records(limit=1000))
+    """JSON API。带分页参数时只返回当前页，避免一次加载全部图片。"""
+    paging_keys = ('page', 'page_size', 'q', 'type', 'review', 'sort', 'order')
+    if not any(key in request.args for key in paging_keys):
+        return jsonify(database.list_records(limit=1000))
+    try:
+        page = int(request.args.get('page', 1))
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        page_size = int(request.args.get('page_size', 10))
+    except (TypeError, ValueError):
+        page_size = 10
+    return jsonify(database.query_records(
+        page=page,
+        page_size=page_size,
+        query=request.args.get('q', ''),
+        computer_type=request.args.get('type', 'all'),
+        review=request.args.get('review', 'all'),
+        sort=request.args.get('sort', ''),
+        order=request.args.get('order', 'desc'),
+    ))
 
 
 @app.route('/api/record/<int:record_id>', methods=['PUT'])

@@ -103,6 +103,12 @@ header a:hover { text-decoration: underline; }
 .export-options button { background: #00695c; color: #fff; border: 0; border-radius: 6px; padding: 8px 14px; font-size: 14px; cursor: pointer; }
 .export-options button:hover { background: #005047; }
 
+
+.record-pager { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; justify-content: flex-end; margin: 12px 0 28px; color: #445; font-size: 13px; }
+.record-pager button, .record-pager select { border: 1px solid #ccd2e5; background: #fff; color: #334; border-radius: 6px; padding: 6px 10px; font-size: 13px; cursor: pointer; }
+.record-pager button:disabled { color: #aaa; cursor: default; }
+.record-pager.loading { opacity: .65; }
+tr.empty-row td { text-align: center; color: #888; padding: 28px 10px; }
 .flash-bar { padding: 12px; border-radius: 6px; margin-bottom: 16px; }
 .flash-bar.success { background: #d4edda; color: #155724; }
 .flash-bar.danger  { background: #f8d7da; color: #721c24; }
@@ -347,7 +353,7 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
             <option value="reviewed">已审核</option>
             <option value="unreviewed">未审核</option>
         </select>
-        <h3 style="margin:0;">📊 历史记录（{{ records|length }} 条）</h3>
+        <h3 style="margin:0;">📊 历史记录</h3>
         <form id="export-form" class="export-options" method="get" action="{{ url_for('export') }}">
             <label><input type="checkbox" name="types" value="workstation" checked data-export-type>工位电脑</label>
             <label><input type="checkbox" name="types" value="office" checked data-export-type>办公电脑</label>
@@ -380,7 +386,6 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
     })();
     </script>
 
-    {% if records %}
     <div class="records-scroll">
     <table id="records-table">
         <thead>
@@ -401,41 +406,23 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
                 <th class="sticky-col">操作</th>
             </tr>
         </thead>
-        <tbody>
-        {% for r in records %}
-            <tr data-id="{{ r.id }}" data-machine-name="{{ r.machine_name or '' }}" data-upload-time="{{ r.upload_time or '' }}">
-                <td><button type="button" class="review-btn {{ 'reviewed' if r.reviewed else '' }}" data-id="{{ r.id }}" data-reviewed="{{ 1 if r.reviewed else 0 }}">{{ '已审核' if r.reviewed else '未审核' }}</button></td>
-                <td class="editable" data-field="machine_name"><b>{{ r.machine_name or '-' }}</b></td>
-                <td class="editable" data-field="sn_number"><code>{{ r.sn_number or '-' }}</code></td>
-                <td class="editable" data-field="nic1_name">{{ r.nic1_name or '-' }}</td>
-                <td class="editable" data-field="nic1_mac"><code>{{ r.nic1_mac or '-' }}</code></td>
-                <td class="editable" data-field="nic2_name">{{ r.nic2_name or '-' }}</td>
-                <td class="editable" data-field="nic2_mac"><code>{{ r.nic2_mac or '-' }}</code></td>
-                <td class="editable" data-field="disk_gb">{{ r.disk_gb or '-' }}</td>
-                <td class="editable" data-field="memory_gb">{{ r.memory_gb or '-' }}</td>
-                <td class="editable" data-field="department">{{ r.department or '-' }}</td>
-                <td class="editable" data-field="person_name">{{ r.person_name or '-' }}</td>
-                <td class="editable" data-field="employee_id">{{ r.employee_id or '-' }}</td>
-                <td>{{ r.upload_time }}</td>
-                <td class="editable" data-field="migrate_domain">{{ r.migrate_domain or '是' }}</td>
-                <td>
-                    <a href="{{ url_for('uploaded_file', filename=r.image_path.split('/')[-1].split('\\')[-1]) }}" target="_blank">
-                        <img class="record-image" src="{{ url_for('uploaded_file', filename=r.image_path.split('/')[-1].split('\\')[-1], size='thumb') }}" data-full-src="{{ url_for('uploaded_file', filename=r.image_path.split('/')[-1].split('\\')[-1]) }}" loading="lazy" decoding="async" alt="{{ r.image_name or '上传图片' }}">
-                    </a>
-                </td>
-                <td class="sticky-col">
-                    <button class="reprocess-btn edit-btn" data-id="{{ r.id }}">重新识别</button>
-                    <button class="edit-btn" data-id="{{ r.id }}">✏️ 编辑</button>
-                    <button class="delete-btn" data-id="{{ r.id }}">🗑️ 删除</button>
-                </td>
-            </tr>
-        {% endfor %}
-        </tbody>
+        <tbody></tbody>
     </table>
     </div>
-    {% else %}
-        <div class="empty">还没有记录，赶快上传第一张图片吧 🚀</div>
-    {% endif %}
+    <div class="record-pager" id="record-pager">
+        <button type="button" id="page-prev">上一页</button>
+        <span id="page-status">第 1 / 1 页</span>
+        <button type="button" id="page-next">下一页</button>
+        <label>每页
+            <select id="page-size" aria-label="每页条数">
+                <option value="10" selected>10</option>
+                <option value="20">20</option>
+                <option value="40">40</option>
+            </select>
+        </label>
+        <span id="page-total"></span>
+    </div>
+
 
 </div>
 
@@ -657,90 +644,9 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
     var FIELD_ORDER = ['machine_name', 'sn_number', 'nic1_name', 'nic1_mac',
                        'nic2_name', 'nic2_mac', 'disk_gb', 'memory_gb', 'migrate_domain'];
 
-    function insertRecordRow(d) {
-        var f = d.fields || {};
-        function val(k) { return f[k] ? escapeHtml(f[k]) : '-'; }
-        var imgUrl = escapeHtml(d.image_url || '');
-
-        var rowHtml = '<tr data-id="' + d.record_id + '" data-machine-name="' + escapeHtml(f.machine_name || '') + '" data-upload-time="' + escapeHtml(d.upload_time || '') + '">' +
-            '<td><button type="button" class="review-btn ' + (d.reviewed ? 'reviewed' : '') + '" data-id="' + d.record_id + '" data-reviewed="' + (d.reviewed ? '1' : '0') + '">' + (d.reviewed ? '已审核' : '未审核') + '</button></td>' +
-            '<td class="editable" data-field="machine_name"><b>' + val('machine_name') + '</b></td>' +
-            '<td class="editable" data-field="sn_number"><code>' + val('sn_number') + '</code></td>' +
-            '<td class="editable" data-field="nic1_name">' + val('nic1_name') + '</td>' +
-            '<td class="editable" data-field="nic1_mac"><code>' + val('nic1_mac') + '</code></td>' +
-            '<td class="editable" data-field="nic2_name">' + val('nic2_name') + '</td>' +
-            '<td class="editable" data-field="nic2_mac"><code>' + val('nic2_mac') + '</code></td>' +
-            '<td class="editable" data-field="disk_gb">' + val('disk_gb') + '</td>' +
-            '<td class="editable" data-field="memory_gb">' + val('memory_gb') + '</td>' +
-            '<td class="editable" data-field="department">' + val('department') + '</td>' +
-            '<td class="editable" data-field="person_name">' + val('person_name') + '</td>' +
-            '<td class="editable" data-field="employee_id">' + val('employee_id') + '</td>' +
-            '<td>' + escapeHtml(d.upload_time || '') + '</td>' +
-            '<td class="editable" data-field="migrate_domain">' + escapeHtml(f.migrate_domain || '是') + '</td>' +
-            '<td><a href="' + imgUrl + '" target="_blank"><img class="record-image" src="' + imgUrl + '?size=thumb" data-full-src="' + imgUrl + '" loading="lazy" decoding="async" alt="' + escapeHtml(d.image_name || '上传图片') + '"></a></td>' +
-            '<td><button class="edit-btn" data-id="' + d.record_id + '">✏️ 编辑</button>' +
-            '<button class="delete-btn" data-id="' + d.record_id + '">🗑️ 删除</button>' +
-            '<button class="reprocess-btn edit-btn" data-id="' + d.record_id + '">重新识别</button></td>' +
-            '</tr>';
-
-        var table = document.getElementById('records-table');
-        if (!table) {
-            // 之前没有记录（空状态提示），创建表格
-            var emptyDiv = document.querySelector('.empty');
-            table = document.createElement('table');
-            table.id = 'records-table';
-            table.innerHTML =
-                '<thead><tr><th class="sortable" data-sort-key="reviewed">审核状态</th>' +
-                '<th class="sortable" data-sort-key="machine_name">机器名</th><th class="sortable" data-sort-key="sn_number">SN号</th><th class="sortable" data-sort-key="nic1_name">网卡1</th><th class="sortable" data-sort-key="nic1_mac">网卡1 MAC</th>' +
-                '<th class="sortable" data-sort-key="nic2_name">网卡2</th><th class="sortable" data-sort-key="nic2_mac">网卡2 MAC</th><th class="sortable" data-sort-key="disk_gb">硬盘(GB)</th><th class="sortable" data-sort-key="memory_gb">内存(GB)</th><th class="sortable" data-sort-key="department">部门</th><th class="sortable" data-sort-key="person_name">姓名</th><th class="sortable" data-sort-key="employee_id">工号</th>' +
-                '<th class="sortable" data-sort-key="upload_time">上传时间</th><th class="sortable" data-sort-key="migrate_domain">是否迁域</th><th class="draggable-col">原图</th>' +
-                '<th class="sticky-col">操作</th>' +
-                '</tr></thead><tbody>' + rowHtml + '</tbody>';
-            if (emptyDiv) {
-                var scroll = document.createElement('div');
-                scroll.className = 'records-scroll';
-                scroll.appendChild(table);
-                emptyDiv.parentNode.replaceChild(scroll, emptyDiv);
-            }
-        } else {
-            // 已有表格：新记录插入到最顶部（列表按时间倒序）
-            var tbody = table.querySelector('tbody');
-            tbody.insertAdjacentHTML('afterbegin', rowHtml);
-            // 与后端导出保持一致：首页最多展示最新 1000 条。
-            while (tbody.children.length > 1000) {
-                tbody.removeChild(tbody.lastElementChild);
-            }
-            // 闪一下高亮，提示新行
-            var newRow = tbody.querySelector('tr');
-            newRow.style.background = '#e8f4ff';
-            setTimeout(function () { newRow.style.background = ''; }, 2000);
-        }
-        normalizeDynamicRow(table.querySelector('tbody').firstElementChild);
-        applyRecordFilters();
-
-        // 更新记录条数
-        var h3 = document.querySelector('.toolbar h3');
-        if (h3) {
-            var m = h3.textContent.match(/(\d+)/);
-            var count = m ? Math.min(1000, parseInt(m[1], 10) + 1) : 1;
-            h3.textContent = '📊 历史记录（' + count + ' 条）';
-        }
-    }
-    function compareMachineNames(a, b) {
-        a = String(a || '').trim().toUpperCase();
-        b = String(b || '').trim().toUpperCase();
-        if (!a && !b) return 0;
-        if (!a) return 1;
-        if (!b) return -1;
-        var ap = a.split(/(\d+)/), bp = b.split(/(\d+)/);
-        var length = Math.max(ap.length, bp.length);
-        for (var i = 0; i < length; i++) {
-            var ax = ap[i] == null ? '' : ap[i], bx = bp[i] == null ? '' : bp[i];
-            if (ax === bx) continue;
-            if (/^\d+$/.test(ax) && /^\d+$/.test(bx)) return Number(ax) - Number(bx);
-            return ax < bx ? -1 : 1;
-        }
-        return 0;
+    function insertRecordRow() {
+        recordPage = 1;
+        if (window.refreshRecordList) return window.refreshRecordList();
     }
     function normalizeDynamicRow(row) {
         if (!row) return;
@@ -794,19 +700,11 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
         return parts.join('\n').toUpperCase();
     }
     function applyRecordFilters() {
-        var query = machineSearch ? machineSearch.value.trim().toUpperCase() : '';
-        var reviewMode = reviewFilter ? reviewFilter.value : 'all';
-        var computerType = currentComputerType();
-        var table = document.getElementById('records-table');
-        if (!table) return;
-        Array.prototype.forEach.call(table.querySelectorAll('tbody tr'), function (row) {
-            var machineName = (row.getAttribute('data-machine-name') || '').trim().toUpperCase();
-            var reviewed = row.querySelector('.review-btn') && row.querySelector('.review-btn').getAttribute('data-reviewed') === '1';
-            var matchesQuery = !query || rowSearchText(row).indexOf(query) !== -1;
-            var matchesReview = reviewMode === 'all' || (reviewMode === 'reviewed' ? reviewed : !reviewed);
-            var matchesType = computerType === 'all' || computerTypeOf(machineName) === computerType;
-            row.style.display = matchesQuery && matchesReview && matchesType ? '' : 'none';
-        });
+        recordPage = 1;
+        window.clearTimeout(reloadTimer);
+        reloadTimer = window.setTimeout(function () {
+            if (window.refreshRecordList) window.refreshRecordList();
+        }, 250);
     }
     // The edit/review handlers live in the second script block below. Expose
     // this closure deliberately at the page seam instead of relying on an
@@ -831,36 +729,22 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
             applyRecordFilters();
         });
     }
+    var recordPage = 1;
+    var recordPages = 1;
+    var recordPageSize = 10;
+    var listRequest = 0;
+    var reloadTimer = 0;
+    try {
+        var savedPageSize = parseInt(window.localStorage.getItem('snocr-page-size'), 10);
+        if (savedPageSize === 10 || savedPageSize === 20 || savedPageSize === 40) recordPageSize = savedPageSize;
+    } catch (err) {}
     var sortState = { key: null, direction: 'ascending' };
-    function sortTable(key, preserveDirection) {
-        var table = document.getElementById('records-table');
-        if (!table || !key) return;
-        if (!preserveDirection) {
-            sortState.direction = sortState.key === key && sortState.direction === 'ascending' ? 'descending' : 'ascending';
-        }
+    function sortTable(key) {
+        if (!key) return;
+        sortState.direction = sortState.key === key && sortState.direction === 'ascending' ? 'descending' : 'ascending';
         sortState.key = key;
-        var tbody = table.querySelector('tbody');
-        var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
-        var decorated = rows.map(function (row) { return { row: row, value: getSortValue(row, key) }; });
-        decorated.sort(function (a, b) {
-            var av = a.value, bv = b.value, result;
-            if (key === 'machine_name') result = compareMachineNames(av, bv);
-            else if (key === 'upload_time') result = (Date.parse(String(av).replace(' ', 'T')) || 0) - (Date.parse(String(bv).replace(' ', 'T')) || 0);
-            else result = String(av).localeCompare(String(bv), 'zh-CN', { numeric: true, sensitivity: 'base' });
-            return sortState.direction === 'ascending' ? result : -result;
-        });
-        var fragment = document.createDocumentFragment();
-        decorated.forEach(function (item) { fragment.appendChild(item.row); });
-        tbody.appendChild(fragment);
-        Array.prototype.forEach.call(table.querySelectorAll('th.sortable'), function (header) {
-            header.setAttribute('aria-sort', header.getAttribute('data-sort-key') === key ? sortState.direction : 'none');
-        });
-    }
-    function getSortValue(row, key) {
-        if (key === 'reviewed') return row.querySelector('.review-btn').getAttribute('data-reviewed');
-        if (key === 'upload_time') return row.getAttribute('data-upload-time') || '';
-        var cell = row.querySelector('td[data-field="' + key + '"]');
-        return cell ? cell.textContent.trim().replace(/^-$/, '') : '';
+        recordPage = 1;
+        if (window.refreshRecordList) window.refreshRecordList();
     }
     document.addEventListener('click', function (event) {
         var header = event.target.closest ? event.target.closest('th.sortable') : null;
@@ -1026,62 +910,104 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
             '<button type="button" class="delete-btn" data-id="' + escapeHtml(id) + '">🗑️ 删除</button></td>' +
             '</tr>';
     }
-    function recordsTableHtml(body) {
-        return '<thead><tr><th class="sortable" data-sort-key="reviewed">审核状态</th>' +
-            '<th class="sortable" data-sort-key="machine_name">机器名</th><th class="sortable" data-sort-key="sn_number">SN号</th><th class="sortable" data-sort-key="nic1_name">网卡1</th><th class="sortable" data-sort-key="nic1_mac">网卡1 MAC</th>' +
-            '<th class="sortable" data-sort-key="nic2_name">网卡2</th><th class="sortable" data-sort-key="nic2_mac">网卡2 MAC</th><th class="sortable" data-sort-key="disk_gb">硬盘(GB)</th><th class="sortable" data-sort-key="memory_gb">内存(GB)</th><th class="sortable" data-sort-key="department">部门</th><th class="sortable" data-sort-key="person_name">姓名</th><th class="sortable" data-sort-key="employee_id">工号</th>' +
-            '<th class="sortable" data-sort-key="upload_time">上传时间</th><th class="sortable" data-sort-key="migrate_domain">是否迁域</th><th class="draggable-col">原图</th>' +
-            '<th class="sticky-col">操作</th></tr></thead><tbody>' + body + '</tbody>';
-    }
-    function renderRecordList(records) {
+    function renderRecordList(payload) {
+        if (Array.isArray(payload)) {
+            payload = { records: payload, total: payload.length, page: 1, page_size: recordPageSize, pages: 1 };
+        }
+        var records = payload.records || [];
+        var total = Number(payload.total || 0);
+        recordPage = Number(payload.page || 1);
+        recordPages = Number(payload.pages || 1);
+        recordPageSize = Number(payload.page_size || recordPageSize);
         var heading = document.querySelector('.toolbar h3');
-        if (heading) heading.textContent = '📊 历史记录（' + records.length + ' 条）';
-        var scroll = document.querySelector('.records-scroll:not(.pin-x)');
-        var pin = document.querySelector('.records-scroll.pin-x');
-        if (!records.length) {
-            if (scroll) scroll.remove();
-            if (pin) pin.remove();
-            if (!document.querySelector('.empty')) {
-                var empty = document.createElement('div');
-                empty.className = 'empty';
-                empty.textContent = '还没有记录，赶快上传第一张图片吧 🚀';
-                document.querySelector('.toolbar').insertAdjacentElement('afterend', empty);
-            }
-            return;
-        }
+        if (heading) heading.textContent = '\u{1f4ca} \u5386\u53f2\u8bb0\u5f55\uff08' + total + ' \u6761\uff09';
         var table = document.getElementById('records-table');
-        if (!table) {
-            var emptyState = document.querySelector('.empty');
-            table = document.createElement('table');
-            table.id = 'records-table';
-            scroll = document.createElement('div');
-            scroll.className = 'records-scroll';
-            scroll.appendChild(table);
-            if (emptyState) emptyState.parentNode.replaceChild(scroll, emptyState);
-            else document.querySelector('.toolbar').insertAdjacentElement('afterend', scroll);
-            table.innerHTML = recordsTableHtml('');
-            enableColumnResize(table);
-            enableColumnReorder(table);
+        if (!table) return;
+        var query = machineSearch ? machineSearch.value.trim() : '';
+        var reviewMode = reviewFilter ? reviewFilter.value : 'all';
+        var computerType = currentComputerType();
+        var filtered = query || reviewMode !== 'all' || computerType !== 'all';
+        var tbody = table.querySelector('tbody');
+        if (!records.length) {
+            var message = filtered ? '\u6ca1\u6709\u7b26\u5408\u6761\u4ef6\u7684\u8bb0\u5f55' : '\u8fd8\u6ca1\u6709\u8bb0\u5f55\uff0c\u8d76\u5feb\u4e0a\u4f20\u7b2c\u4e00\u5f20\u56fe\u7247\u5427';
+            tbody.innerHTML = '<tr class="empty-row"><td colspan="' + table.querySelectorAll('thead th').length + '">' + message + '</td></tr>';
+        } else {
+            tbody.innerHTML = records.map(recordRowHtml).join('');
+            Array.prototype.forEach.call(tbody.querySelectorAll('tr'), function (row) {
+                alignRowToHeaders(row, table);
+            });
         }
-        table.querySelector('tbody').innerHTML = records.map(recordRowHtml).join('');
-        Array.prototype.forEach.call(table.querySelectorAll('tbody tr'), function (row) {
-            alignRowToHeaders(row, table);
+        Array.prototype.forEach.call(table.querySelectorAll('th.sortable'), function (header) {
+            header.setAttribute('aria-sort', header.getAttribute('data-sort-key') === sortState.key ? sortState.direction : 'none');
         });
-        if (sortState.key) sortTable(sortState.key, true);
-        applyRecordFilters();
+        var status = document.getElementById('page-status');
+        var totalLabel = document.getElementById('page-total');
+        var prev = document.getElementById('page-prev');
+        var next = document.getElementById('page-next');
+        var sizeSelect = document.getElementById('page-size');
+        if (status) status.textContent = '\u7b2c ' + recordPage + ' / ' + recordPages + ' \u9875';
+        if (totalLabel) totalLabel.textContent = '\u5171 ' + total + ' \u6761';
+        if (prev) prev.disabled = recordPage <= 1;
+        if (next) next.disabled = recordPage >= recordPages || total === 0;
+        if (sizeSelect && sizeSelect.value !== String(recordPageSize)) sizeSelect.value = String(recordPageSize);
         pinHorizontalScroll();
     }
     window.refreshRecordList = function () {
-        return fetch('/api/records', { headers: { 'Accept': 'application/json' } })
+        var requestId = ++listRequest;
+        var params = new URLSearchParams();
+        params.set('page', String(recordPage || 1));
+        params.set('page_size', String(recordPageSize || 10));
+        var query = machineSearch ? machineSearch.value.trim() : '';
+        if (query) params.set('q', query);
+        var reviewMode = reviewFilter ? reviewFilter.value : 'all';
+        if (reviewMode && reviewMode !== 'all') params.set('review', reviewMode);
+        var computerType = currentComputerType();
+        if (computerType && computerType !== 'all') params.set('type', computerType);
+        if (sortState.key) {
+            params.set('sort', sortState.key);
+            params.set('order', sortState.direction === 'descending' ? 'desc' : 'asc');
+        }
+        var pager = document.getElementById('record-pager');
+        if (pager) pager.classList.add('loading');
+        return fetch('/api/records?' + params.toString(), { headers: { 'Accept': 'application/json' } })
             .then(function (resp) {
-                if (!resp.ok) throw new Error('刷新列表失败');
+                if (!resp.ok) throw new Error('\u5237\u65b0\u5217\u8868\u5931\u8d25');
                 return resp.json();
             })
-            .then(function (records) {
-                if (!Array.isArray(records)) throw new Error('刷新列表失败');
-                renderRecordList(records);
+            .then(function (payload) {
+                if (requestId !== listRequest) return;
+                renderRecordList(payload);
+            })
+            .finally(function () {
+                if (requestId === listRequest && pager) pager.classList.remove('loading');
             });
     };
+    function bindRecordPager() {
+        var prev = document.getElementById('page-prev');
+        var next = document.getElementById('page-next');
+        var sizeSelect = document.getElementById('page-size');
+        if (sizeSelect) sizeSelect.value = String(recordPageSize);
+        if (prev) prev.addEventListener('click', function () {
+            if (recordPage <= 1) return;
+            recordPage -= 1;
+            window.refreshRecordList();
+        });
+        if (next) next.addEventListener('click', function () {
+            if (recordPage >= recordPages) return;
+            recordPage += 1;
+            window.refreshRecordList();
+        });
+        if (sizeSelect) sizeSelect.addEventListener('change', function () {
+            var nextSize = parseInt(sizeSelect.value, 10);
+            recordPageSize = nextSize === 20 || nextSize === 40 ? nextSize : 10;
+            recordPage = 1;
+            try { window.localStorage.setItem('snocr-page-size', String(recordPageSize)); } catch (err) {}
+            window.refreshRecordList();
+        });
+    }
+    bindRecordPager();
+    window.refreshRecordList();
+
     var originalInsertRecordRow = insertRecordRow;
     insertRecordRow = function (data) {
         originalInsertRecordRow(data);

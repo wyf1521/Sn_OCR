@@ -1,4 +1,5 @@
 """数据库模块：使用 SQLite 永久保存 OCR 识别结果和用户上传记录"""
+import re
 import sqlite3
 import os
 from datetime import datetime
@@ -216,6 +217,133 @@ def list_records(username=None, limit=500):
     rows = [dict(r) for r in cur.fetchall()]
     conn.close()
     return rows
+
+
+PAGE_SIZES = (10, 20, 40)
+_PAGE_FIELDS = (
+    "id", "image_name", "image_path", "machine_name", "sn_number",
+    "nic1_name", "nic1_mac", "nic2_name", "nic2_mac", "disk_gb", "memory_gb",
+    "department", "person_name", "employee_id", "upload_time", "migrate_domain",
+    "reviewed",
+)
+_SEARCH_COLUMNS = (
+    "image_name", "machine_name", "sn_number", "nic1_name", "nic1_mac",
+    "nic2_name", "nic2_mac", "disk_gb", "memory_gb", "department",
+    "person_name", "employee_id", "upload_time", "migrate_domain",
+)
+_SORT_COLUMNS = {
+    "reviewed": "reviewed",
+    "machine_name": "machine_name",
+    "sn_number": "sn_number",
+    "nic1_name": "nic1_name",
+    "nic1_mac": "nic1_mac",
+    "nic2_name": "nic2_name",
+    "nic2_mac": "nic2_mac",
+    "disk_gb": "disk_gb",
+    "memory_gb": "memory_gb",
+    "department": "department",
+    "person_name": "person_name",
+    "employee_id": "employee_id",
+    "upload_time": "upload_time",
+    "migrate_domain": "migrate_domain",
+}
+
+
+def _machine_sort_key(name):
+    text = str(name or "").strip().upper()
+    if not text:
+        return (1, ())
+    parts = re.split(r"(\d+)", text)
+    natural = tuple((1, int(part)) if part.isdigit() else (0, part) for part in parts if part)
+    return (0, natural)
+
+
+def _page_record(row):
+    return {key: row[key] for key in _PAGE_FIELDS}
+
+
+def query_records(page=1, page_size=10, query="", computer_type="all",
+                  review="all", sort="", order="desc"):
+    """Return one page of records. Images are not included; only the current page is returned."""
+    try:
+        page = int(page)
+    except (TypeError, ValueError):
+        page = 1
+    try:
+        page_size = int(page_size)
+    except (TypeError, ValueError):
+        page_size = 10
+    if page_size not in PAGE_SIZES:
+        page_size = 10
+    page = max(1, page)
+    filters = []
+    params = []
+    kind = str(computer_type or "all").strip().lower()
+    if kind == "workstation":
+        filters.append("upper(trim(COALESCE(machine_name, ''))) LIKE 'YCSPGW%'")
+    elif kind == "office":
+        filters.append("upper(trim(COALESCE(machine_name, ''))) LIKE 'YCSPBG%'")
+    review_mode = str(review or "all").strip().lower()
+    if review_mode == "reviewed":
+        filters.append("COALESCE(reviewed, 0) = 1")
+    elif review_mode == "unreviewed":
+        filters.append("COALESCE(reviewed, 0) = 0")
+    text = str(query or "").strip()
+    if text:
+        escaped = text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like = f"%{escaped.upper()}%"
+        filters.append("(" + " OR ".join(
+            f"upper(COALESCE({column}, '')) LIKE ? ESCAPE '\\'" for column in _SEARCH_COLUMNS
+        ) + ")")
+        params.extend([like] * len(_SEARCH_COLUMNS))
+    where_sql = (" WHERE " + " AND ".join(filters)) if filters else ""
+    direction = "ASC" if str(order or "").strip().lower() == "asc" else "DESC"
+    sort_key = str(sort or "").strip()
+    sort_column = _SORT_COLUMNS.get(sort_key, "")
+    conn = get_conn()
+    total = conn.execute(f"SELECT COUNT(*) FROM ocr_records{where_sql}", params).fetchone()[0]
+    pages = max(1, (total + page_size - 1) // page_size) if total else 1
+    if page > pages:
+        page = pages
+    offset = (page - 1) * page_size
+    columns = ", ".join(_PAGE_FIELDS)
+    if sort_key == "machine_name":
+        id_rows = conn.execute(
+            f"SELECT id, machine_name FROM ocr_records{where_sql}",
+            params,
+        ).fetchall()
+        id_rows = sorted(id_rows, key=lambda row: _machine_sort_key(row["machine_name"]), reverse=direction == "DESC")
+        page_ids = [row["id"] for row in id_rows[offset:offset + page_size]]
+        if page_ids:
+            placeholders = ", ".join("?" for _ in page_ids)
+            fetched = conn.execute(
+                f"SELECT {columns} FROM ocr_records WHERE id IN ({placeholders})",
+                page_ids,
+            ).fetchall()
+            by_id = {row["id"]: _page_record(row) for row in fetched}
+            records = [by_id[record_id] for record_id in page_ids if record_id in by_id]
+        else:
+            records = []
+    else:
+        if sort_column in {"disk_gb", "memory_gb"}:
+            order_sql = f"CAST(NULLIF({sort_column}, '') AS REAL) {direction}, id DESC"
+        elif sort_column:
+            order_sql = f"{sort_column} {direction}, id DESC"
+        else:
+            order_sql = "id DESC"
+        rows = conn.execute(
+            f"SELECT {columns} FROM ocr_records{where_sql} ORDER BY {order_sql} LIMIT ? OFFSET ?",
+            params + [page_size, offset],
+        ).fetchall()
+        records = [_page_record(row) for row in rows]
+    conn.close()
+    return {
+        "records": records,
+        "total": total,
+        "page": page,
+        "page_size": page_size,
+        "pages": pages,
+    }
 
 
 def get_record(record_id):

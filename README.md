@@ -292,7 +292,7 @@ console.log(result.fields);
 | 500 | 单张请求处理失败，或批量请求全部失败 |
 | 503 | 服务端没有配置 `SN_OCR_API_TOKEN` |
 
-浏览器页面使用的接口仍然是 `/upload`；已登录用户可以通过 `GET /api/records` 获取历史记录，通过页面完成审核和导出。
+浏览器页面使用的接口仍然是 `/upload`。历史记录按页请求 `GET /api/records?page=1&page_size=10`，`page_size` 只接受 10、20、40，并可用 `q`、`type`、`review`、`sort`、`order` 筛选排序。不带这些参数时，`GET /api/records` 仍返回最多 1000 条数组，方便其他系统对接。
 
 ## 许可
 
