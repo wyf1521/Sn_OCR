@@ -270,20 +270,35 @@ OFFICE_HEADERS = [
 
 def export_to_template(records: list, template_path: str = TEMPLATE_PATH,
                        output_path: str = None, embed_images: bool = True,
-                       sort_by_machine_name: bool = True) -> str:
-    """Create a fresh two-sheet workbook from historical OCR records.
+                       sort_by_machine_name: bool = True,
+                       include_types=None) -> str:
+    """Create a workbook from historical OCR records.
 
     The source workbook is used only as a column/layout reference. It is never
     modified. Records are split by YCSPGW/YCSPBG machine prefix and duplicate
-    serial numbers are emitted once.
+    serial numbers are emitted once. `include_types` limits the workbook to
+    workstation, office, or both sheets.
     """
     if output_path is None:
         output_path = os.path.join(Config.DATA_FOLDER, 'YCSP电脑信息_已填写.xlsx')
     os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
+    selected = ['workstation', 'office'] if include_types is None else [
+        kind for kind in include_types if kind in ('workstation', 'office')
+    ]
+    if not selected:
+        raise ValueError('至少需要导出一种电脑类型')
+
     wb = Workbook()
-    first = wb.active
-    first.title = '工位电脑'
-    office = wb.create_sheet('办公电脑')
+    sheets = {}
+    for kind, title in (('workstation', '工位电脑'), ('office', '办公电脑')):
+        if kind not in selected:
+            continue
+        if not sheets:
+            ws = wb.active
+            ws.title = title
+        else:
+            ws = wb.create_sheet(title)
+        sheets[kind] = ws
 
     header_font = Font(bold=True, color='FFFFFF')
     header_fill = PatternFill('solid', fgColor='4472C4')
@@ -291,7 +306,9 @@ def export_to_template(records: list, template_path: str = TEMPLATE_PATH,
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
 
     def write_sheet(ws, headers, rows):
-        output_headers = list(headers) + [('原图', '_image')]
+        output_headers = list(headers)
+        if embed_images:
+            output_headers.append(('原图', '_image'))
         for col, (title, key) in enumerate(output_headers, 1):
             cell = ws.cell(1, col, title)
             cell.font = header_font; cell.fill = header_fill
@@ -307,7 +324,8 @@ def export_to_template(records: list, template_path: str = TEMPLATE_PATH,
             if sn and sn in seen:
                 continue
             if sn: seen.add(sn)
-            ws.row_dimensions[out_row].height = ROW_HEIGHT_PT
+            if embed_images:
+                ws.row_dimensions[out_row].height = ROW_HEIGHT_PT
             for col, (_, key) in enumerate(output_headers, 1):
                 if key == '_image':
                     cell = ws.cell(out_row, col)
@@ -334,9 +352,13 @@ def export_to_template(records: list, template_path: str = TEMPLATE_PATH,
     workstation, office_rows = [], []
     for rec in records or []:
         kind = _record_type(rec)
-        if kind == 'workstation': workstation.append(rec)
-        elif kind == 'office': office_rows.append(rec)
-    write_sheet(first, WORKSTATION_HEADERS, workstation)
-    write_sheet(office, OFFICE_HEADERS, office_rows)
+        if kind == 'workstation' and 'workstation' in selected:
+            workstation.append(rec)
+        elif kind == 'office' and 'office' in selected:
+            office_rows.append(rec)
+    if 'workstation' in sheets:
+        write_sheet(sheets['workstation'], WORKSTATION_HEADERS, workstation)
+    if 'office' in sheets:
+        write_sheet(sheets['office'], OFFICE_HEADERS, office_rows)
     wb.save(output_path)
     return output_path

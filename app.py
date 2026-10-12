@@ -388,41 +388,82 @@ def external_ocr():
 @login_required
 def uploaded_file(filename):
     """返回已上传的图片（供前端预览）"""
+    if request.args.get('size') == 'thumb':
+        original = os.path.join(Config.UPLOAD_FOLDER, os.path.basename(filename))
+        thumb = excel_export._make_thumb(original)
+        if thumb:
+            return send_file(thumb, mimetype='image/jpeg', max_age=60 * 60 * 24 * 30)
     return send_from_directory(Config.UPLOAD_FOLDER, filename)
+
+
+_EXPORT_TYPES = ('workstation', 'office')
+
+
+def _export_options():
+    """Read export checkboxes. Missing params keep the previous defaults."""
+    raw_types = request.args.getlist('types')
+    if not raw_types:
+        selected = list(_EXPORT_TYPES)
+    else:
+        selected = []
+        for item in raw_types:
+            for part in str(item).split(','):
+                kind = part.strip().lower()
+                if kind in _EXPORT_TYPES and kind not in selected:
+                    selected.append(kind)
+    image_values = [str(value).strip().lower() for value in request.args.getlist('embed_images')]
+    if not image_values:
+        embed_images = True
+    else:
+        embed_images = any(value in {'1', 'true', 'yes', 'on'} for value in image_values)
+    return selected, embed_images
+
+
+def _send_template_export(empty_message):
+    """Export reviewed records for the selected computer types."""
+    selected, embed_images = _export_options()
+    if not selected:
+        flash('请至少选择工位电脑或办公电脑', 'warning')
+        return redirect(url_for('index'))
+
+    reviewed = [
+        record for record in database.list_records(limit=1000)
+        if int(record.get('reviewed') or 0) == 1
+    ]
+    records = [
+        record for record in reviewed
+        if excel_export._record_type(record) in selected
+    ]
+    if not records:
+        message = empty_message if not reviewed else '所选类型暂无已审核数据可导出'
+        flash(message, 'warning')
+        return redirect(url_for('index'))
+
+    out_dir = os.path.join(Config.DATA_FOLDER, 'exports')
+    os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, 'YCSP电脑信息_已填写.xlsx')
+    excel_export.export_to_template(
+        records,
+        output_path=out_path,
+        embed_images=embed_images,
+        include_types=selected,
+    )
+    return send_file(out_path, as_attachment=True,
+                     download_name='YCSP电脑信息_已填写.xlsx')
 
 
 @app.route('/export')
 @login_required
 def export():
     """Export records merged into the YCSP inventory template."""
-    records = [r for r in database.list_records(limit=1000) if int(r.get('reviewed') or 0) == 1]
-    if not records:
-        flash('暂无数据可导出', 'warning')
-        return redirect(url_for('index'))
-
-    out_dir = os.path.join(Config.DATA_FOLDER, 'exports')
-    os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, 'YCSP电脑信息_已填写.xlsx')
-    excel_export.export_to_template(records, output_path=out_path)
-    return send_file(out_path, as_attachment=True,
-                     download_name='YCSP电脑信息_已填写.xlsx')
+    return _send_template_export('暂无数据可导出')
 
 
 @app.route('/export/inventory')
 @login_required
 def export_inventory():
     """Merge OCR records into the supplied workstation/office workbook."""
-    records = [r for r in database.list_records(limit=1000) if int(r.get('reviewed') or 0) == 1]
-    if not records:
-        flash('暂无数据可填写到电脑信息表', 'warning')
-        return redirect(url_for('index'))
-
-    out_dir = os.path.join(Config.DATA_FOLDER, 'exports')
-    os.makedirs(out_dir, exist_ok=True)
-    out_path = os.path.join(out_dir, 'YCSP电脑信息_已填写.xlsx')
-    excel_export.export_to_template(records, output_path=out_path)
-    return send_file(out_path, as_attachment=True,
-                     download_name='YCSP电脑信息_已填写.xlsx')
+    return _send_template_export('暂无数据可填写到电脑信息表')
 
 
 @app.route('/api/records')

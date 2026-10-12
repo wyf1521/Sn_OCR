@@ -97,6 +97,11 @@ header a:hover { text-decoration: underline; }
 .type-switch button:last-child { border-right: 0; }
 .type-switch button.active { background: #667eea; color: #fff; }
 .type-switch button:hover:not(.active) { background: #f3f5ff; }
+.export-options { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 4px 6px 4px 10px; background: #fff; border: 1px solid #ccd2e5; border-radius: 8px; }
+.export-options label { display: inline-flex; align-items: center; gap: 4px; color: #445; font-size: 13px; white-space: nowrap; cursor: pointer; }
+.export-options input { margin: 0; }
+.export-options button { background: #00695c; color: #fff; border: 0; border-radius: 6px; padding: 8px 14px; font-size: 14px; cursor: pointer; }
+.export-options button:hover { background: #005047; }
 
 .flash-bar { padding: 12px; border-radius: 6px; margin-bottom: 16px; }
 .flash-bar.success { background: #d4edda; color: #155724; }
@@ -343,8 +348,37 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
             <option value="unreviewed">未审核</option>
         </select>
         <h3 style="margin:0;">📊 历史记录（{{ records|length }} 条）</h3>
-        <a class="btn inventory" href="{{ url_for('export') }}">📋 填写并导出电脑信息表</a>
+        <form id="export-form" class="export-options" method="get" action="{{ url_for('export') }}">
+            <label><input type="checkbox" name="types" value="workstation" checked data-export-type>工位电脑</label>
+            <label><input type="checkbox" name="types" value="office" checked data-export-type>办公电脑</label>
+            <label><input type="checkbox" id="export-types-all" checked>全选</label>
+            <label><input type="hidden" name="embed_images" value="0"><input type="checkbox" name="embed_images" value="1" checked>导出图片</label>
+            <button type="submit">📋 填写并导出电脑信息表</button>
+        </form>
     </div>
+    <script>
+    (function () {
+        var form = document.getElementById('export-form');
+        if (!form) return;
+        var all = document.getElementById('export-types-all');
+        var boxes = Array.prototype.slice.call(form.querySelectorAll('[data-export-type]'));
+        function syncAll() {
+            all.checked = boxes.length > 0 && boxes.every(function (box) { return box.checked; });
+        }
+        all.addEventListener('change', function () {
+            boxes.forEach(function (box) { box.checked = all.checked; });
+        });
+        boxes.forEach(function (box) {
+            box.addEventListener('change', syncAll);
+        });
+        form.addEventListener('submit', function (event) {
+            if (!boxes.some(function (box) { return box.checked; })) {
+                event.preventDefault();
+                window.alert('请至少选择工位电脑或办公电脑');
+            }
+        });
+    })();
+    </script>
 
     {% if records %}
     <div class="records-scroll">
@@ -386,7 +420,7 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
                 <td class="editable" data-field="migrate_domain">{{ r.migrate_domain or '是' }}</td>
                 <td>
                     <a href="{{ url_for('uploaded_file', filename=r.image_path.split('/')[-1].split('\\')[-1]) }}" target="_blank">
-                        <img class="record-image" src="{{ url_for('uploaded_file', filename=r.image_path.split('/')[-1].split('\\')[-1]) }}" alt="{{ r.image_name or '上传图片' }}">
+                        <img class="record-image" src="{{ url_for('uploaded_file', filename=r.image_path.split('/')[-1].split('\\')[-1], size='thumb') }}" data-full-src="{{ url_for('uploaded_file', filename=r.image_path.split('/')[-1].split('\\')[-1]) }}" loading="lazy" decoding="async" alt="{{ r.image_name or '上传图片' }}">
                     </a>
                 </td>
                 <td class="sticky-col">
@@ -643,7 +677,7 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
             '<td class="editable" data-field="employee_id">' + val('employee_id') + '</td>' +
             '<td>' + escapeHtml(d.upload_time || '') + '</td>' +
             '<td class="editable" data-field="migrate_domain">' + escapeHtml(f.migrate_domain || '是') + '</td>' +
-            '<td><a href="' + imgUrl + '" target="_blank"><img class="record-image" src="' + imgUrl + '" alt="' + escapeHtml(d.image_name || '上传图片') + '"></a></td>' +
+            '<td><a href="' + imgUrl + '" target="_blank"><img class="record-image" src="' + imgUrl + '?size=thumb" data-full-src="' + imgUrl + '" loading="lazy" decoding="async" alt="' + escapeHtml(d.image_name || '上传图片') + '"></a></td>' +
             '<td><button class="edit-btn" data-id="' + d.record_id + '">✏️ 编辑</button>' +
             '<button class="delete-btn" data-id="' + d.record_id + '">🗑️ 删除</button>' +
             '<button class="reprocess-btn edit-btn" data-id="' + d.record_id + '">重新识别</button></td>' +
@@ -986,7 +1020,7 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
             '<td class="editable" data-field="employee_id">' + displayText(record.employee_id) + '</td>' +
             '<td>' + displayText(record.upload_time) + '</td>' +
             '<td class="editable" data-field="migrate_domain">' + escapeHtml(record.migrate_domain || '是') + '</td>' +
-            '<td><a href="' + escapeHtml(imgUrl) + '" target="_blank"><img class="record-image" src="' + escapeHtml(imgUrl) + '" alt="' + escapeHtml(record.image_name || '上传图片') + '"></a></td>' +
+            '<td><a href="' + escapeHtml(imgUrl) + '" target="_blank"><img class="record-image" src="' + escapeHtml(imgUrl) + '?size=thumb" data-full-src="' + escapeHtml(imgUrl) + '" loading="lazy" decoding="async" alt="' + escapeHtml(record.image_name || '上传图片') + '"></a></td>' +
             '<td class="sticky-col"><button type="button" class="reprocess-btn edit-btn" data-id="' + escapeHtml(id) + '">重新识别</button>' +
             '<button type="button" class="edit-btn" data-id="' + escapeHtml(id) + '">✏️ 编辑</button>' +
             '<button type="button" class="delete-btn" data-id="' + escapeHtml(id) + '">🗑️ 删除</button></td>' +
@@ -1193,7 +1227,7 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
         var image = e.target.closest ? e.target.closest('.record-image') : null;
         if (image) {
             e.preventDefault();
-            imagePreview.src = image.currentSrc || image.src;
+            imagePreview.src = image.getAttribute('data-full-src') || image.currentSrc || image.src;
             imagePreview.alt = image.alt || '图片预览';
             imagePreviewMask.classList.add('show');
             return;
