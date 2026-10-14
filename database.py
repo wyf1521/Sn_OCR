@@ -199,6 +199,21 @@ def find_record_by_sn(sn_number: str):
     return dict(row) if row else None
 
 
+def find_record_by_machine_name(machine_name):
+    """Find one record by its normalized computer name."""
+    normalized = str(machine_name or '').strip()
+    if not normalized:
+        return None
+    conn = get_conn()
+    cur = conn.cursor()
+    cur.execute(
+        'SELECT * FROM ocr_records WHERE upper(trim(machine_name))=upper(?) LIMIT 1',
+        (normalized,)
+    )
+    row = cur.fetchone()
+    conn.close()
+    return dict(row) if row else None
+
 def list_records(username=None, limit=500):
     """查询识别记录，username 不为空时按用户过滤"""
     try:

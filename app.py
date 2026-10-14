@@ -15,6 +15,7 @@ from config import Config
 import database
 import ocr_engine
 import excel_export
+import excel_import
 
 
 app = Flask(__name__)
@@ -449,6 +450,87 @@ def _send_template_export(empty_message):
     return send_file(out_path, as_attachment=True,
                      download_name='YCSP电脑信息_已填写.xlsx')
 
+
+@app.route('/import/excel', methods=['POST'])
+@login_required
+def import_excel():
+    uploaded = request.files.get('excel_file')
+    if not uploaded or not uploaded.filename:
+        flash('\u8bf7\u9009\u62e9\u8981\u5bfc\u5165\u7684 .xlsx \u6587\u4ef6', 'warning')
+        return redirect(url_for('index'))
+
+    saved_images = []
+    imported_count = 0
+    duplicate_count = 0
+    failed_count = 0
+    try:
+        entries = excel_import.read_excel_records(uploaded)
+        for entry in entries:
+            fields = entry['fields']
+            machine_name = fields['machine_name']
+            sn_number = str(fields.get('sn_number', '') or '').strip()
+            if database.find_record_by_machine_name(machine_name):
+                duplicate_count += 1
+                continue
+            if sn_number and database.find_record_by_sn(sn_number):
+                duplicate_count += 1
+                continue
+
+            image_path = ''
+            image_name = f"{machine_name}.xlsx"
+            image = entry.get('image')
+            if image:
+                image_format, image_data = image
+                if len(image_data) > Config.MAX_FILE_SIZE:
+                    failed_count += 1
+                    continue
+                extension = 'jpg' if image_format == 'jpeg' else image_format
+                image_name = f"{machine_name}.{extension}"
+                image_path = os.path.join(Config.UPLOAD_FOLDER, f"{uuid.uuid4().hex}.{extension}")
+                with open(image_path, 'wb') as image_file:
+                    image_file.write(image_data)
+                saved_images.append(image_path)
+
+            fields.setdefault('migrate_domain', '\u662f')
+            try:
+                record_id = database.save_record(
+                    username=session.get('user', 'admin'),
+                    image_name=image_name,
+                    image_path=image_path,
+                    parsed=fields,
+                    full_text='Excel \u5bfc\u5165',
+                )
+            except Exception:
+                if image_path:
+                    _remove_image_artifacts(image_path)
+                    saved_images.remove(image_path)
+                logger.exception('Excel import failed for machine=%s', machine_name)
+                failed_count += 1
+                continue
+            if record_id is None:
+                if image_path:
+                    _remove_image_artifacts(image_path)
+                    saved_images.remove(image_path)
+                duplicate_count += 1
+                continue
+            imported_count += 1
+    except ValueError as exc:
+        flash(str(exc), 'danger')
+        return redirect(url_for('index'))
+    except Exception:
+        for image_path in saved_images:
+            _remove_image_artifacts(image_path)
+        logger.exception('Excel workbook import failed')
+        flash('\u5bfc\u5165 Excel \u5931\u8d25\uff0c\u8bf7\u68c0\u67e5\u6587\u4ef6\u683c\u5f0f', 'danger')
+        return redirect(url_for('index'))
+
+    flash(
+        f"Excel \u5bfc\u5165\u5b8c\u6210\uff1a\u65b0\u589e {imported_count} \u6761\uff0c"
+        f"\u91cd\u590d\u8df3\u8fc7 {duplicate_count} \u6761\uff0c\u5931\u8d25 {failed_count} \u6761\u3002"
+        f"\u65b0\u5bfc\u5165\u8bb0\u5f55\u9ed8\u8ba4\u4e3a\u672a\u5ba1\u6838\u3002",
+        'success' if imported_count or duplicate_count else 'warning',
+    )
+    return redirect(url_for('index'))
 
 @app.route('/export')
 @login_required

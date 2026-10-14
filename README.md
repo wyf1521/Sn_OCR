@@ -10,6 +10,7 @@
 - 💾 数据永久保存到 SQLite，所有登录用户共享记录
 - 📊 一键导出已审核记录为 `.xlsx`，并按机器名排序、嵌入原图
 - 🌐 简单的 `/api/records` JSON API 便于对接其他系统
+- 📥 导入导出格式的 `.xlsx`，支持工位/办公电脑多工作表和可选图片
 
 ## OCR 配置（重点）
 
@@ -42,6 +43,8 @@ Sn_OCR/
 ├── database.py         # SQLite 数据访问层
 ├── ocr_engine.py       # OCR 引擎（多供应商）+ 字段解析
 ├── excel_export.py     # openpyxl 导出
+├── excel_import.py     # Excel 表格导入
+├── excel_export_template.xlsx # 导出格式模板（必需）
 ├── templates/          # Jinja2 模板
 │   ├── login.html
 │   └── index.html

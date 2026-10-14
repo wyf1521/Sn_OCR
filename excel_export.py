@@ -16,7 +16,7 @@ from config import Config
 # The inventory workbook is kept next to the application.  Its two sheets use
 # different column layouts, so records must be merged into the existing rows
 # instead of being exported to a newly-created generic sheet.
-TEMPLATE_FILENAME = "YCSP电脑信息.xlsx"
+TEMPLATE_FILENAME = "excel_export_template.xlsx"
 TEMPLATE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), TEMPLATE_FILENAME)
 
 WORKSTATION_COLUMNS = {
@@ -272,13 +272,7 @@ def export_to_template(records: list, template_path: str = TEMPLATE_PATH,
                        output_path: str = None, embed_images: bool = True,
                        sort_by_machine_name: bool = True,
                        include_types=None) -> str:
-    """Create a workbook from historical OCR records.
-
-    The source workbook is used only as a column/layout reference. It is never
-    modified. Records are split by YCSPGW/YCSPBG machine prefix and duplicate
-    serial numbers are emitted once. `include_types` limits the workbook to
-    workstation, office, or both sheets.
-    """
+    """Export records using the supplied workbook's layout and formatting."""
     if output_path is None:
         output_path = os.path.join(Config.DATA_FOLDER, 'YCSP电脑信息_已填写.xlsx')
     os.makedirs(os.path.dirname(output_path) or '.', exist_ok=True)
@@ -286,68 +280,96 @@ def export_to_template(records: list, template_path: str = TEMPLATE_PATH,
         kind for kind in include_types if kind in ('workstation', 'office')
     ]
     if not selected:
-        raise ValueError('至少需要导出一种电脑类型')
+        raise ValueError('At least one computer type must be selected')
 
-    wb = Workbook()
+    wb = load_workbook(template_path)
+    template_ws = wb.active
+    for extra_sheet in list(wb.worksheets):
+        if extra_sheet is not template_ws:
+            wb.remove(extra_sheet)
+
+    sheet_titles = {
+        'workstation': '\u5de5\u4f4d\u7535\u8111',
+        'office': '\u529e\u516c\u7535\u8111',
+    }
     sheets = {}
-    for kind, title in (('workstation', '工位电脑'), ('office', '办公电脑')):
-        if kind not in selected:
-            continue
-        if not sheets:
-            ws = wb.active
-            ws.title = title
-        else:
-            ws = wb.create_sheet(title)
+    for index, kind in enumerate(selected):
+        ws = template_ws if index == 0 else wb.copy_worksheet(template_ws)
+        ws.title = sheet_titles[kind]
+        for row in ws.iter_rows(min_row=2):
+            for cell in row:
+                cell.value = None
         sheets[kind] = ws
 
-    header_font = Font(bold=True, color='FFFFFF')
-    header_fill = PatternFill('solid', fgColor='4472C4')
-    thin = Side(style='thin', color='BFBFBF')
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
-
-    def write_sheet(ws, headers, rows):
-        output_headers = list(headers)
+    def write_sheet(ws, rows):
+        output_headers = list(OFFICE_HEADERS)
         if embed_images:
-            output_headers.append(('原图', '_image'))
-        for col, (title, key) in enumerate(output_headers, 1):
-            cell = ws.cell(1, col, title)
-            cell.font = header_font; cell.fill = header_fill
-            cell.alignment = Alignment(horizontal='center', vertical='center')
-            cell.border = border
-            width = 34 if key == '_image' else max(12, min(34, len(title) * 2 + 8))
-            ws.column_dimensions[get_column_letter(col)].width = width
+            image_col = len(output_headers) + 1
+            header = ws.cell(1, len(output_headers))
+            image_header = ws.cell(1, image_col, '\u539f\u56fe')
+            image_header._style = copy(header._style)
+            ws.column_dimensions[get_column_letter(image_col)].width = 34
+            ws.cell(2, image_col)._style = copy(ws.cell(2, len(output_headers))._style)
+            output_headers.append(('\u539f\u56fe', '_image'))
+
         seen = set()
         out_row = 2
         ordered_rows = sorted(rows, key=_machine_sort_key) if sort_by_machine_name else rows
+        previous_machine = None
+
+        def prepare_row(row_number):
+            if row_number != 2:
+                _copy_row_style(ws, 2, row_number, len(output_headers))
+            if embed_images:
+                ws.row_dimensions[row_number].height = ROW_HEIGHT_PT
+
+        def write_placeholder(machine_name):
+            nonlocal out_row
+            prepare_row(out_row)
+            for col, (_, key) in enumerate(output_headers, 1):
+                if key == '_image':
+                    continue
+                value = out_row - 1 if key is None else machine_name if key == 'machine_name' else None
+                ws.cell(out_row, col, value)
+            out_row += 1
+
         for rec in ordered_rows:
             sn = str(rec.get('sn_number', '') or '').strip().upper()
             if sn and sn in seen:
                 continue
-            if sn: seen.add(sn)
-            if embed_images:
-                ws.row_dimensions[out_row].height = ROW_HEIGHT_PT
+            if sn:
+                seen.add(sn)
+            machine_name = str(rec.get('machine_name', '') or '').strip()
+            match = re.fullmatch(r'(.*?)(\d+)', machine_name)
+            if match and previous_machine:
+                previous_match = re.fullmatch(r'(.*?)(\d+)', previous_machine)
+                if previous_match and previous_match.group(1).upper() == match.group(1).upper():
+                    previous_number = int(previous_match.group(2))
+                    current_number = int(match.group(2))
+                    for missing_number in range(previous_number + 1, current_number):
+                        missing_name = f'{match.group(1)}{missing_number:0{len(match.group(2))}d}'
+                        write_placeholder(missing_name)
+            elif match and sort_by_machine_name:
+                for missing_number in range(1, int(match.group(2))):
+                    missing_name = f'{match.group(1)}{missing_number:0{len(match.group(2))}d}'
+                    write_placeholder(missing_name)
+
+            prepare_row(out_row)
             for col, (_, key) in enumerate(output_headers, 1):
                 if key == '_image':
-                    cell = ws.cell(out_row, col)
-                    cell.alignment = Alignment(vertical='center', horizontal='center')
-                    cell.border = border
-                    if embed_images:
-                        thumb = _make_thumb(rec.get('image_path', ''))
-                        if thumb:
-                            try:
-                                image = XLImage(thumb)
-                                image.anchor = f'{get_column_letter(col)}{out_row}'
-                                ws.add_image(image)
-                            except Exception:
-                                pass
+                    thumb = _make_thumb(rec.get('image_path', '')) if embed_images else None
+                    if thumb:
+                        try:
+                            image = XLImage(thumb)
+                            image.anchor = f'{get_column_letter(col)}{out_row}'
+                            ws.add_image(image)
+                        except Exception:
+                            pass
                     continue
-                value = out_row - 1 if key is None else rec.get(key, '')
-                cell = ws.cell(out_row, col, value if value is not None else '')
-                cell.alignment = Alignment(vertical='center', wrap_text=True)
-                cell.border = border
+                value = out_row - 1 if key is None else rec.get(key)
+                ws.cell(out_row, col, value if value is not None else None)
             out_row += 1
-        ws.freeze_panes = 'A2'
-        ws.auto_filter.ref = f'A1:{get_column_letter(len(output_headers))}{max(1, out_row - 1)}'
+            previous_machine = machine_name
 
     workstation, office_rows = [], []
     for rec in records or []:
@@ -357,8 +379,8 @@ def export_to_template(records: list, template_path: str = TEMPLATE_PATH,
         elif kind == 'office' and 'office' in selected:
             office_rows.append(rec)
     if 'workstation' in sheets:
-        write_sheet(sheets['workstation'], WORKSTATION_HEADERS, workstation)
+        write_sheet(sheets['workstation'], workstation)
     if 'office' in sheets:
-        write_sheet(sheets['office'], OFFICE_HEADERS, office_rows)
+        write_sheet(sheets['office'], office_rows)
     wb.save(output_path)
     return output_path

@@ -8,6 +8,7 @@ data/*
 !data/.gitkeep
 *.db
 *.xlsx
+!excel_export_template.xlsx
 *_test_result.txt
 img.jpg
 

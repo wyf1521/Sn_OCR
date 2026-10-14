@@ -55,6 +55,9 @@ header a:hover { text-decoration: underline; }
 }
 .upload-card button:hover { background: #5568d3; }
 .upload-card button:disabled { background: #aaa; cursor: not-allowed; }
+.excel-import-form { display: flex !important; flex-wrap: wrap; gap: 10px; align-items: center; }
+.excel-import-form input[type=file] { min-width: min(100%, 360px); flex: 1; }
+.excel-import-form .import-help { flex-basis: 100%; color: #777; font-size: 12px; }
 
 .ocr-status { margin-top: 14px; font-size: 13px; display: none; }
 .ocr-status.show { display: block; }
@@ -333,6 +336,13 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
         </form>
         <p style="color:#888; font-size:12px; margin: 12px 0 0 0;">可选择单张图片或整个文件夹，支持 png / jpg / jpeg / bmp / webp</p>
         <div id="ocr-status" class="ocr-status"></div>
+        <hr style="border:0;border-top:1px solid #e8eaf0;margin:20px 0;">
+        <h3>&#x5BFC;&#x5165; Excel &#x8868;</h3>
+        <form class="excel-import-form" action="{{ url_for('import_excel') }}" method="POST" enctype="multipart/form-data">
+            <input type="file" name="excel_file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required aria-label="Excel &#x6587;&#x4EF6;">
+            <button type="submit">&#x5BFC;&#x5165;&#x8BB0;&#x5F55;</button>
+            <span class="import-help">&#x652F;&#x6301;&#x4F7F;&#x7528;&#x5BFC;&#x51FA;&#x8868;&#x683C;&#x5F0F;&#x7684; .xlsx&#xFF0C;&#x53EF;&#x5305;&#x542B;&#x5DE5;&#x4F4D;&#x7535;&#x8111;&#x548C;&#x529E;&#x516C;&#x7535;&#x8111;&#x5DE5;&#x4F5C;&#x8868;&#xFF1B;&#x56FE;&#x7247;&#x53EF;&#x9009;&#x3002;&#x91CD;&#x590D;&#x8BB0;&#x5F55;&#x8DF3;&#x8FC7;&#x4E0D;&#x8986;&#x76D6;&#xFF0C;&#x65B0;&#x8BB0;&#x5F55;&#x5BFC;&#x5165;&#x540E;&#x9700;&#x5BA1;&#x6838;&#x3002</span>
+        </form>
     </div>
 
     {% with messages = get_flashed_messages(with_categories=true) %}
