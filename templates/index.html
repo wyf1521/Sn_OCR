@@ -95,6 +95,9 @@ header a:hover { text-decoration: underline; }
 .toolbar a.btn:hover { background: #218838; }
 .machine-search { width: 190px; padding: 8px 10px; border: 1px solid #ccd2e5; border-radius: 6px; font-size: 14px; }
 #machine-search { width: 280px; }
+.search-controls { display: inline-flex; gap: 6px; align-items: center; }
+.search-controls button { padding: 8px 14px; border: 0; border-radius: 6px; background: #667eea; color: #fff; font-size: 14px; cursor: pointer; }
+.search-controls button:hover { background: #5568d3; }
 .type-switch { display: inline-flex; overflow: hidden; border: 1px solid #ccd2e5; border-radius: 6px; background: #fff; }
 .type-switch button { border: 0; border-right: 1px solid #ccd2e5; background: #fff; color: #445; padding: 8px 14px; font-size: 14px; cursor: pointer; }
 .type-switch button:last-child { border-right: 0; }
@@ -357,7 +360,10 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
             <button type="button" data-type="workstation" aria-pressed="false">工位电脑</button>
             <button type="button" data-type="office" aria-pressed="false">办公电脑</button>
         </div>
-        <input type="search" id="machine-search" class="machine-search" placeholder="搜索机器名、SN、网卡、部门等..." aria-label="搜索列表内容">
+        <form id="machine-search-form" class="search-controls" role="search">
+            <input type="search" id="machine-search" class="machine-search" placeholder="搜索机器名、SN、网卡、部门等..." aria-label="搜索列表内容">
+            <button type="submit" id="machine-search-submit">查询</button>
+        </form>
         <select id="review-filter" class="machine-search" aria-label="筛选审核状态">
             <option value="all">全部记录</option>
             <option value="reviewed">已审核</option>
@@ -688,6 +694,7 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
     }
     Array.prototype.forEach.call(document.querySelectorAll('#records-table tbody tr'), normalizeDynamicRow);
     var machineSearch = document.getElementById('machine-search');
+    var appliedSearchQuery = machineSearch ? machineSearch.value.trim() : '';
     var reviewFilter = document.getElementById('review-filter');
     function currentComputerType() {
         var active = document.querySelector('#type-switch button.active');
@@ -711,17 +718,19 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
     }
     function applyRecordFilters() {
         recordPage = 1;
-        window.clearTimeout(reloadTimer);
-        reloadTimer = window.setTimeout(function () {
-            if (window.refreshRecordList) window.refreshRecordList();
-        }, 250);
+        if (window.refreshRecordList) window.refreshRecordList();
     }
     // The edit/review handlers live in the second script block below. Expose
     // this closure deliberately at the page seam instead of relying on an
     // out-of-scope function reference.
     window.applyRecordFilters = applyRecordFilters;
-    if (machineSearch) {
-        machineSearch.addEventListener('input', applyRecordFilters);
+    var machineSearchForm = document.getElementById('machine-search-form');
+    if (machineSearchForm) {
+        machineSearchForm.addEventListener('submit', function (event) {
+            event.preventDefault();
+            appliedSearchQuery = machineSearch ? machineSearch.value.trim() : '';
+            applyRecordFilters();
+        });
     }
     if (reviewFilter) {
         reviewFilter.addEventListener('change', applyRecordFilters);
@@ -743,7 +752,6 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
     var recordPages = 1;
     var recordPageSize = 10;
     var listRequest = 0;
-    var reloadTimer = 0;
     try {
         var savedPageSize = parseInt(window.localStorage.getItem('snocr-page-size'), 10);
         if (savedPageSize === 10 || savedPageSize === 20 || savedPageSize === 40) recordPageSize = savedPageSize;
@@ -933,7 +941,7 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
         if (heading) heading.textContent = '\u{1f4ca} \u5386\u53f2\u8bb0\u5f55\uff08' + total + ' \u6761\uff09';
         var table = document.getElementById('records-table');
         if (!table) return;
-        var query = machineSearch ? machineSearch.value.trim() : '';
+        var query = appliedSearchQuery;
         var reviewMode = reviewFilter ? reviewFilter.value : 'all';
         var computerType = currentComputerType();
         var filtered = query || reviewMode !== 'all' || computerType !== 'all';
@@ -967,7 +975,7 @@ th.sortable[aria-sort="descending"]::after { content: ' ↓'; opacity: 1; }
         var params = new URLSearchParams();
         params.set('page', String(recordPage || 1));
         params.set('page_size', String(recordPageSize || 10));
-        var query = machineSearch ? machineSearch.value.trim() : '';
+        var query = appliedSearchQuery;
         if (query) params.set('q', query);
         var reviewMode = reviewFilter ? reviewFilter.value : 'all';
         if (reviewMode && reviewMode !== 'all') params.set('review', reviewMode);
